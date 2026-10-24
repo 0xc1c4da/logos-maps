@@ -70,6 +70,9 @@ Headless, with `logosctl`: install `maps_core`'s `.lgx`, then
   boundary; structured data travels as JSON text. Keep methods and `.rep` slots to
   at most 4 arguments.
 - `metadata.json` descriptions: ASCII only, no semicolons (CMake splits on them).
+- Never call a module synchronously from inside one of its event callbacks or from
+  `onContextReady()`: the call blocks until the 30 s timeout and returns a default.
+  Defer it to the next event-loop turn (`QTimer::singleShot`), as the view backends do.
 - Render peer-supplied text with `textFormat: Text.PlainText`.
 - `maps_core` keeps state in memory for now. Persist through `storage_module`
   before shipping.

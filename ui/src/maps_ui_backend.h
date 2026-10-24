@@ -36,5 +36,11 @@ public:
     void onContextReady() override;
 
 private:
+    /// Re-read the core's state and tell the view, on a later event-loop
+    /// turn. Calling back into a module synchronously from inside one of its
+    /// event callbacks (or from onContextReady) blocks the dispatcher until
+    /// the 30 s call timeout and then yields a default, so the call is always
+    /// deferred: 0 ms from an event callback, ~1 s from onContextReady.
+    void scheduleRefresh(const QString& what, int delayMs = 0);
     void refresh(const QString& what);
 };

@@ -155,14 +155,16 @@ Item {
                 objectName: "maps_ui.layerId"
                 Layout.preferredWidth: 160
                 placeholderText: qsTr("layer id")
-                onAccepted: root.addLayerFromForm()
+                Keys.onReturnPressed: root.addLayerFromForm()
+                Keys.onEnterPressed: root.addLayerFromForm()
             }
             LogosTextField {
                 id: layerTitleField
                 objectName: "maps_ui.layerTitle"
                 Layout.fillWidth: true
                 placeholderText: qsTr("title (optional)")
-                onAccepted: root.addLayerFromForm()
+                Keys.onReturnPressed: root.addLayerFromForm()
+                Keys.onEnterPressed: root.addLayerFromForm()
             }
             LogosButton {
                 objectName: "maps_ui.addLayer"
