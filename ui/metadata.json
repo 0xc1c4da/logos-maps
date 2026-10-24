@@ -5,12 +5,12 @@
   "type": "ui_qml",
   "interface": "universal",
   "category": "general",
-  "description": "Maps: a Logos Basecamp app with a QML view and a C++ backend in its own process.",
+  "description": "Maps: the map view. Renders the layers held by maps_core, which any module can add to programmatically.",
   "author": "0xc1c4da",
   "main": "maps_ui_plugin",
   "icon": "src/icons/icon.png",
   "view": "qml/Main.qml",
-  "dependencies": [],
+  "dependencies": ["maps_core"],
   "codegen": { "rep": "src/maps_ui.rep" },
 
   "nix": {
