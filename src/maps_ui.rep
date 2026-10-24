@@ -1,0 +1,9 @@
+// View <-> backend contract. SLOTs are callable from QML via the replica
+// (logos.module("maps_ui")), PROPs are pushed to every replica on change.
+// Keep slots to <= 4 arguments; pass structured data as one JSON string.
+class MapsUi
+{
+    SLOT(QString ping(QString message))
+    PROP(QString status="Ready" READONLY)
+    PROP(int pingCount=0 READONLY)
+}
