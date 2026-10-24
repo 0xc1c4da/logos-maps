@@ -14,7 +14,10 @@
     # local core edit, build with
     #   nix build --override-input maps_core path:../core
     # In logos-workspace this follows the `maps-core` workspace input.
-    maps_core.url = "github:0xc1c4da/logos-maps?dir=core";
+    maps_core = {
+      url = "github:0xc1c4da/logos-maps?dir=core";
+      inputs.logos-module-builder.follows = "logos-module-builder";
+    };
   };
 
   outputs = inputs@{ logos-module-builder, ... }:
