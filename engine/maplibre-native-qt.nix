@@ -47,7 +47,7 @@ stdenv.mkDerivation {
     fetchSubmodules = true;
     # Filled in by `nix build` once (Spike B / M3): the fake hash makes nix
     # print the real one.
-    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    hash = "sha256-nTVrGwGTtB1v6ka+h+63JHKyYOovcL6AmN+5Bm4Dyxg=";
   };
 
   inherit patches;
