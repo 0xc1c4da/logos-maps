@@ -1,7 +1,12 @@
 #include "view/view_controller.h"
 
+#include "input/gesture_controller.h"
+#include "input/map_camera_target.h"
+#include "input/picker.h"
 #include "providers/logos_file_source.h"
 #include "providers/provider_registry.h"
+#include "view/builtins.h"
+#include "view/selection_overlay.h"
 #include "view/capabilities.h"
 #include "view/map_change.h"
 #include "view/map_item.h"
@@ -14,11 +19,17 @@
 #include <QMapLibre/qmaplibre_patchset.h>
 #endif
 
+#include <QMapLibre/Types>
+
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QQuickWindow>
+#include <QRectF>
+#include <QtMath>
+
+#include <cmath>
 
 namespace maps::view {
 
@@ -91,6 +102,12 @@ void ViewController::start()
     m_window = std::make_unique<ViewWindow>();
     m_window->setTitle(QStringLiteral("Logos Maps"));
     m_window->resize(m_options.initialSize);
+    // The gesture controller is what MapWindow.qml's handler stacks talk
+    // to; it exists before the QML loads and gets its camera once the map
+    // is created.
+    m_gestures = std::make_unique<GestureController>(this);
+    m_window->setGestureController(m_gestures.get());
+    m_window->setContextObject(QStringLiteral("view"), this);
     m_mapItem = m_window->load(m_options.qmlDir);
     if (!m_mapItem) {
         setStatus(QStringLiteral("failed"));
@@ -106,7 +123,10 @@ void ViewController::start()
         m_styles = std::make_unique<StyleLoader>(map, m_core, this);
         connect(m_applier.get(), &SceneApplier::sceneError, this, &ViewController::error);
         connect(m_applier.get(), &SceneApplier::revisionApplied, this, [this](quint64) { refreshViewState(false); });
-        connect(m_styles.get(), &StyleLoader::attributionChanged, this, &ViewController::attributionChanged);
+        connect(m_styles.get(), &StyleLoader::attributionChanged, this, [this](const QString& html) {
+            m_attributionHtml = html;
+            emit attributionChanged(html);
+        });
         connect(m_styles.get(), &StyleLoader::basemapFailed, this, [this](const QString& id, const QString& reason) {
             emit error(QStringLiteral("maps.basemapFailed"), id + QStringLiteral(": ") + reason);
             // The previous style stays on screen; the view state reports what
@@ -127,6 +147,7 @@ void ViewController::start()
             reportEvent(QStringLiteral("basemapFailed"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("id"), m_basemap}, {QStringLiteral("reason"), reason}});
         });
         connect(m_mapItem, &MapItem::viewportChanged, this, [this](int, int, double) { refreshViewState(false); });
+        attachInput(map);
         openView();
     };
     if (m_mapItem->hasMap()) {
@@ -138,6 +159,80 @@ void ViewController::start()
     if (m_options.showWindow) m_window->show();
 }
 
+void ViewController::attachInput(QMapLibre::Map* map)
+{
+    m_cameraTarget = std::make_unique<MapCameraTarget>(map, m_mapItem);
+    m_gestures->setCamera(m_cameraTarget.get());
+    m_picker = std::make_unique<Picker>(map, this);
+    m_builtins = std::make_unique<Builtins>(map, this);
+    m_selection = std::make_unique<SelectionOverlay>(map, this);
+    // M8.15: without native feature state the overlay mirrors selection and
+    // hover; picks still report the state as if the engine held it.
+    connect(m_applier.get(), &SceneApplier::featureStateFallback, this, [this](const QString& sourceId, const QString& featureId, const QJsonValue& state) {
+        if (m_selection) m_selection->apply(sourceId, featureId, state);
+    });
+    connect(m_applier.get(), &SceneApplier::sourceUpdated, this, [this](const QString& sourceId) {
+        if (m_selection) m_selection->onSourceUpdated(sourceId);
+    });
+    m_picker->setStateFallback(m_selection->sourceId(), [this](const QString& sourceId, const QString& featureId) {
+        return m_selection ? m_selection->stateFor(sourceId, featureId) : QJsonObject();
+    });
+
+    // M8.5 / M7.5: the engine's freeze flag follows the controller; camera
+    // idle is declared when every gesture and its inertia has ended.
+    connect(m_gestures.get(), &GestureController::gestureInProgressChanged, this, [this](bool active) {
+        if (m_gestureInProgress == active) return;
+        m_gestureInProgress = active;
+        refreshViewState(false);
+    });
+    connect(m_gestures.get(), &GestureController::idle, this, [this] { refreshViewState(true); });
+    // M8.7 gesture kinds for follow-camera policies.
+    connect(m_gestures.get(), &GestureController::gestureBegan, this, [this](const QString& kind) {
+        reportEvent(QStringLiteral("gestureBegan"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("kind"), kind}});
+    });
+    connect(m_gestures.get(), &GestureController::gestureEnded, this, [this](const QString& kind) {
+        reportEvent(QStringLiteral("gestureEnded"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("kind"), kind}});
+    });
+    // M8.12-M8.13: taps, long presses and context clicks are picks.
+    connect(m_gestures.get(), &GestureController::tapped, this, [this](const QPointF& p) { pickAt(QStringLiteral("tap"), p); });
+    connect(m_gestures.get(), &GestureController::longPressed, this, [this](const QPointF& p) { pickAt(QStringLiteral("longPress"), p); });
+    connect(m_gestures.get(), &GestureController::contextRequested, this, [this](const QPointF& p) { pickAt(QStringLiteral("context"), p); });
+    connect(m_gestures.get(), &GestureController::centrePickRequested, this, [this](bool longPress) {
+        const QSize s = viewportSize();
+        pickAt(longPress ? QStringLiteral("longPress") : QStringLiteral("tap"), QPointF(s.width() / 2.0, s.height() / 2.0));
+    });
+    connect(m_picker.get(), &Picker::picked, this, [this](const QJsonObject& payload) {
+        emit featurePicked(compact(payload));
+        reportEvent(QStringLiteral("featurePicked"), payload);
+    });
+    connect(m_picker.get(), &Picker::failed, this, &ViewController::error);
+
+    // Built-ins ride above the scene (M6.11).
+    connect(m_applier.get(), &SceneApplier::layersReconciled, this, [this](const QStringList&, const QStringList&) {
+        // M8.13: the engine's style JSON is the loaded document, so runtime
+        // layers are resolved from the applier's own table.
+        if (m_picker && m_applier) {
+            std::vector<Picker::SceneLayer> layers;
+            for (const SceneApplier::LayerInfo& l : m_applier->layerInfos()) layers.push_back({l.id, l.source, l.sourceLayer, l.type});
+            m_picker->setSceneLayers(std::move(layers));
+        }
+        if (m_builtins) m_builtins->onSceneLayersReconciled();
+        if (m_selection) m_selection->onSceneLayersReconciled();
+    });
+
+    // Settings that arrived before the map existed.
+    if (!m_options_.isEmpty()) applyOptions(m_options_);
+}
+
+void ViewController::pickAt(const QString& kind, const QPointF& px)
+{
+    if (!m_picker) {
+        emit error(QStringLiteral("maps.styleNotLoaded"), QStringLiteral("pick before the view started"));
+        return;
+    }
+    m_picker->pick(kind, px);
+}
+
 void ViewController::stop()
 {
     m_stateTimer.stop();
@@ -146,6 +241,11 @@ void ViewController::stop()
         m_core->closeView(id, [](const CoreReply&) {});
         m_opened = false;
     }
+    if (m_gestures) m_gestures->setCamera(nullptr);
+    m_picker.reset();
+    m_builtins.reset();
+    m_selection.reset();
+    m_cameraTarget.reset();
     m_applier.reset();
     m_styles.reset();
     m_mapItem = nullptr;
@@ -264,8 +364,50 @@ void ViewController::onCoreEvent(const QString& topic, const QJsonObject& payloa
         // clearing means recreating it, which the next start does when the
         // file is gone. Report what we know.
         reportEvent(QStringLiteral("cacheStats"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("path"), m_engine.cachePath}, {QStringLiteral("cleared"), false}});
+    } else if (topic == QLatin1String("trackRequested")) {
+        // M7.6: the session's tracked set is replaced wholesale; an empty
+        // array stops tracking for that session.
+        if (!mine) return;
+        const QString session = payload.value(QStringLiteral("session")).toString();
+        const QJsonArray tracked = payload.value(QStringLiteral("tracked")).toArray();
+        if (tracked.isEmpty()) m_tracked.remove(session);
+        else m_tracked.insert(session, tracked);
+        publishTracked();
     }
-    // trackRequested / snapshotRequested / catalogueChanged: M5 / later.
+    // snapshotRequested / catalogueChanged: later.
+}
+
+void ViewController::publishTracked()
+{
+    if (m_tracked.isEmpty() || !m_mapItem || !m_mapItem->map()) return;
+    QMapLibre::Map& map = *m_mapItem->map();
+    const QSize size = viewportSize();
+    const QRectF visible(0, 0, size.width(), size.height());
+    for (auto it = m_tracked.begin(); it != m_tracked.end(); ++it) {
+        QJsonArray items;
+        for (const QJsonValue& v : it.value().toArray()) {
+            const QJsonObject t = v.toObject();
+            const QJsonArray lonLat = t.value(QStringLiteral("lonLat")).toArray();
+            if (lonLat.size() != 2) continue;
+            const QPointF px = map.pixelForCoordinate(QMapLibre::Coordinate(lonLat[1].toDouble(), lonLat[0].toDouble()));
+            items.append(QJsonObject{{QStringLiteral("id"), t.value(QStringLiteral("id"))},
+                                     {QStringLiteral("px"), QJsonArray{px.x(), px.y()}},
+                                     {QStringLiteral("visible"), visible.contains(px)}});
+        }
+        reportEvent(QStringLiteral("trackedMoved"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("session"), it.key()}, {QStringLiteral("items"), items}});
+    }
+}
+
+double ViewController::metersPerPixelAtPaddedCentre(const QSize& size) const
+{
+    // M7.3: at the padded centre, 512 px tiles (M7.2).
+    if (!m_mapItem || !m_mapItem->map()) return 0.0;
+    QMapLibre::Map& map = *m_mapItem->map();
+    const QMargins m = map.margins();
+    const QPointF centre(m.left() + (size.width() - m.left() - m.right()) / 2.0, m.top() + (size.height() - m.top() - m.bottom()) / 2.0);
+    const QMapLibre::Coordinate c = map.coordinateForPixel(centre);
+    constexpr double kEarthCircumferenceM = 40075016.686;
+    return kEarthCircumferenceM * std::cos(qDegreesToRadians(c.first)) / (512.0 * std::pow(2.0, map.zoom()));
 }
 
 // ── map changes ──────────────────────────────────────────────────────────
@@ -279,6 +421,7 @@ void ViewController::onMapChange(int change)
     if (m.opensBlockingWindow && m_applier) m_applier->onStyleWillLoad();
     switch (m.event) {
     case PublicEvent::BasemapLoading:
+        if (m_picker) m_picker->setStyleLoaded(false);
         reportEvent(QStringLiteral("basemapLoading"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("id"), m_basemap}});
         break;
     case PublicEvent::BasemapLoaded:
@@ -295,13 +438,19 @@ void ViewController::onMapChange(int change)
         if (m_mapItem && m_mapItem->map()) m_mapItem->map()->setPlacementTransitionsEnabled(false);
 #endif
         if (m_applier && m.triggersReplay) m_applier->onStyleLoaded();
+        if (m_builtins) m_builtins->onStyleLoaded();
+        if (m_selection) m_selection->onStyleLoaded();
+        if (m_picker) m_picker->setStyleLoaded(true);
         reportEvent(QStringLiteral("styleReady"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("id"), m_basemap}});
         break;
     case PublicEvent::CameraChanged:
         refreshViewState(false);
         break;
     case PublicEvent::CameraIdle:
-        refreshViewState(true);
+        // The engine reports a region change after every immediate step; a
+        // gesture (or its inertia) still running means the camera is not
+        // idle yet -- GestureController::idle declares that (M7.5).
+        refreshViewState(!(m_gestures && m_gestures->gestureInProgress()));
         break;
     case PublicEvent::FrameRendered:
         if (m_applier) m_applier->onFrameFullyRendered();
@@ -323,20 +472,31 @@ void ViewController::refreshViewState(bool idle)
     QMapLibre::Map& map = *m_mapItem->map();
     const CameraState cam = CameraState::fromMap(map);
     const QSize size = viewportSize();
+    QJsonObject camera = cam.toJson();
+    m_metersPerPixel = metersPerPixelAtPaddedCentre(size);
+    camera.insert(QStringLiteral("metersPerPixel"), m_metersPerPixel);
+    QJsonObject gestureState{{QStringLiteral("active"), m_gestureInProgress}};
+    if (m_gestures) {
+        gestureState.insert(QStringLiteral("frozen"), QJsonArray::fromStringList(m_gestures->frozenIds()));
+        gestureState.insert(QStringLiteral("inertia"), m_gestures->inertiaActive());
+    }
     QJsonObject state{
         {QStringLiteral("v"), 1},
-        {QStringLiteral("camera"), cam.toJson()},
+        {QStringLiteral("camera"), camera},
         {QStringLiteral("size"), QJsonArray{size.width(), size.height()}},
         {QStringLiteral("dpr"), m_mapItem->devicePixelRatio()},
         {QStringLiteral("basemap"), m_basemap},
-        {QStringLiteral("gestureState"), QJsonObject{{QStringLiteral("active"), m_gestureInProgress}}},
+        {QStringLiteral("gestureState"), gestureState},
         {QStringLiteral("appliedRevision"), static_cast<double>(appliedRevision())},
     };
+    if (m_gestures) state.insert(QStringLiteral("gestures"), m_gestures->settingsJson());
     if (!m_options_.isEmpty()) state.insert(QStringLiteral("options"), m_options_);
     const bool cameraMoved = cam != m_lastCamera;
     m_lastCamera = cam;
     m_viewState = state;
     m_stateDirty = true;
+    if (cameraMoved) emit chromeChanged();
+    if (cameraMoved && !m_tracked.isEmpty() && !m_stateTimer.isActive()) publishTracked();
     if (idle) {
         QJsonObject idlePayload = cam.toJson();
         idlePayload.insert(QStringLiteral("v"), 1);
@@ -405,6 +565,31 @@ void ViewController::applyOptions(const QJsonObject& options)
                                               p.value(QStringLiteral("right")).toInt(), p.value(QStringLiteral("bottom")).toInt()));
     }
     if (m_mapItem && options.contains(QStringLiteral("pixelRatio"))) m_mapItem->setPixelRatio(options.value(QStringLiteral("pixelRatio")).toDouble());
+    // M8.10 gesture settings, effective at once (M8.11).
+    if (m_gestures) m_gestures->applyOptions(options);
+    // M8.12 pick priority and box, from the session owner.
+    if (m_picker) {
+        if (options.contains(QStringLiteral("pickPriority"))) {
+            QStringList priority;
+            for (const QJsonValue& v : options.value(QStringLiteral("pickPriority")).toArray()) priority << v.toString();
+            m_picker->setPriority(priority);
+        }
+        if (options.value(QStringLiteral("pickBoxDp")).isDouble()) m_picker->setBoxDp(options.value(QStringLiteral("pickBoxDp")).toDouble());
+    }
+    // M9.9: attribution can be moved, never removed.
+    if (options.value(QStringLiteral("attributionCorner")).isString()) {
+        static const QStringList corners{QStringLiteral("bottom-right"), QStringLiteral("bottom-left"), QStringLiteral("top-right"), QStringLiteral("top-left")};
+        const QString c = options.value(QStringLiteral("attributionCorner")).toString();
+        if (corners.contains(c) && c != m_attributionCorner) {
+            m_attributionCorner = c;
+            emit chromeChanged();
+        }
+    }
+    // M6.11 puck.
+    if (m_builtins) {
+        if (options.contains(QStringLiteral("location"))) m_builtins->setLocation(options.value(QStringLiteral("location")));
+        if (options.value(QStringLiteral("puck")).isObject()) m_builtins->setPuckOptions(options.value(QStringLiteral("puck")).toObject());
+    }
     refreshViewState(false);
 }
 
@@ -437,11 +622,37 @@ void ViewController::setSession(const QString& session)
 
 void ViewController::setGestureInProgress(bool inProgress)
 {
+    // An external gesture (host chrome driving the camera) is one more
+    // frozen id in the controller's ref-count (M8.5).
+    if (m_gestures) {
+        const bool was = m_gestures->frozenIds().contains(QStringLiteral("host"));
+        if (inProgress == was) return;
+        reportEvent(inProgress ? QStringLiteral("gestureBegan") : QStringLiteral("gestureEnded"),
+                    QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("kind"), QStringLiteral("host")}});
+        if (inProgress) m_gestures->freeze(QStringLiteral("host"));
+        else m_gestures->thaw(QStringLiteral("host"));
+        return;
+    }
     if (m_gestureInProgress == inProgress) return;
     m_gestureInProgress = inProgress;
     if (m_mapItem && m_mapItem->map()) m_mapItem->map()->setGestureInProgress(inProgress);
-    reportEvent(inProgress ? QStringLiteral("gestureBegan") : QStringLiteral("gestureEnded"), QJsonObject{{QStringLiteral("v"), 1}});
     refreshViewState(!inProgress);
+}
+
+bool ViewController::compassVisible() const
+{
+    // A compass whose visibility follows bearing != 0 (M6.11); under north
+    // lock the bearing is pinned so there is nothing to show.
+    return std::fabs(m_lastCamera.bearing) > gesture::kNorthLockSlackDeg;
+}
+
+void ViewController::resetNorth()
+{
+    if (!m_mapItem || !m_mapItem->map()) return;
+    QMapLibre::CameraOptions camera;
+    camera.bearing = 0.0;
+    m_mapItem->map()->easeTo(camera, QMapLibre::AnimationOptions(300));
+    refreshViewState(false);
 }
 
 }  // namespace maps::view

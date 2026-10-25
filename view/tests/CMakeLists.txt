@@ -12,7 +12,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick OpenGL Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick OpenGL Network Test)
 find_package(QMapLibre REQUIRED COMPONENTS Core QuickPrivate)
 find_package(SQLite3 REQUIRED)
 
@@ -45,6 +45,14 @@ add_library(maps_view_lib STATIC
     ${VIEW_SRC}/providers/composite_file_source.cpp
     ${VIEW_SRC}/providers/memory_file_source.cpp
     ${VIEW_SRC}/providers/logos_file_source.cpp
+    ${VIEW_SRC}/input/gesture_controller.h
+    ${VIEW_SRC}/input/gesture_controller.cpp
+    ${VIEW_SRC}/input/picker.h
+    ${VIEW_SRC}/input/picker.cpp
+    ${VIEW_SRC}/view/builtins.h
+    ${VIEW_SRC}/view/builtins.cpp
+    ${VIEW_SRC}/view/selection_overlay.h
+    ${VIEW_SRC}/view/selection_overlay.cpp
 )
 target_include_directories(maps_view_lib PUBLIC ${VIEW_SRC})
 target_link_libraries(maps_view_lib PUBLIC
@@ -59,6 +67,20 @@ add_executable(test_engine_contract test_engine_contract.cpp fake_core_client.h 
 target_link_libraries(test_engine_contract PRIVATE maps_view_lib)
 add_test(NAME engine_contract COMMAND test_engine_contract)
 set_tests_properties(engine_contract PROPERTIES
+    ENVIRONMENT "MAPS_VIEW_QML_DIR=${VIEW_SRC}/qml;QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 300)
+
+add_executable(test_picking test_picking.cpp fake_core_client.h fake_core_client.cpp)
+target_link_libraries(test_picking PRIVATE maps_view_lib)
+add_test(NAME picking COMMAND test_picking)
+set_tests_properties(picking PROPERTIES
+    ENVIRONMENT "MAPS_VIEW_QML_DIR=${VIEW_SRC}/qml;QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 300)
+
+add_executable(test_gestures test_gestures.cpp)
+target_link_libraries(test_gestures PRIVATE maps_view_lib Qt6::Test)
+add_test(NAME gestures COMMAND test_gestures)
+set_tests_properties(gestures PROPERTIES
     ENVIRONMENT "MAPS_VIEW_QML_DIR=${VIEW_SRC}/qml;QT_QPA_PLATFORM=offscreen"
     TIMEOUT 300)
 
@@ -81,5 +103,5 @@ if(MAPS_VIEW_BUILD_DEV)
     # directory (ViewWindow::pluginDirectory); ship the QML next to it.
     install(DIRECTORY ${VIEW_SRC}/qml DESTINATION bin)
 endif()
-install(TARGETS test_engine_contract test_providers RUNTIME DESTINATION libexec/maps-view-tests)
+install(TARGETS test_engine_contract test_providers test_gestures test_picking RUNTIME DESTINATION libexec/maps-view-tests)
 install(DIRECTORY ${VIEW_SRC}/qml DESTINATION libexec/maps-view-tests)

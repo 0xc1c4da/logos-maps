@@ -12,6 +12,7 @@
 
 namespace maps::view {
 
+class GestureController;
 class MapItem;
 
 class ViewWindow : public QQuickView {
@@ -23,6 +24,12 @@ public:
     static QString pluginDirectory();
     /// <pluginDir>/qml, or the MAPS_VIEW_QML_DIR override.
     static QString qmlDirectory();
+
+    /// Exposed to MapWindow.qml as the context property `gestures`; set
+    /// before load().
+    void setGestureController(GestureController* controller);
+    /// Any other QObject for MapWindow.qml (the view itself as `view`).
+    void setContextObject(const QString& name, QObject* object);
 
     /// Load qml/MapWindow.qml (or the fallback). Returns the map item.
     MapItem* load(const QString& qmlDir = QString());

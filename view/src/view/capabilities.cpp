@@ -105,7 +105,20 @@ QJsonObject capabilities(const CapabilityInputs& in)
     QJsonObject scene{{QStringLiteral("featureState"), kP2},
                       {QStringLiteral("patchFeatures"), false},  // P3 deferred
                       {QStringLiteral("imageMetadata"), kP4}};
-    QJsonObject pick{{QStringLiteral("renderedFeatures"), kP1}, {QStringLiteral("sourceFeatures"), kP1}};
+    QJsonObject pick{{QStringLiteral("renderedFeatures"), kP1},
+                     {QStringLiteral("sourceFeatures"), kP1},
+                     {QStringLiteral("boxDp"), 24},
+                     {QStringLiteral("kinds"), QJsonArray{QStringLiteral("tap"), QStringLiteral("longPress"), QStringLiteral("context")}}};
+    // Section 8: one detector for touch, handler stacks for pointer input.
+    QJsonObject gestures{{QStringLiteral("touch"), true},
+                         {QStringLiteral("pointer"), true},
+                         {QStringLiteral("keyboard"), true},
+                         {QStringLiteral("settings"), QJsonArray{QStringLiteral("rotateEnabled"), QStringLiteral("tiltEnabled"), QStringLiteral("zoomEnabled"),
+                                                                QStringLiteral("scrollEnabled"), QStringLiteral("doubleTapEnabled"), QStringLiteral("quickZoomEnabled"),
+                                                                QStringLiteral("twoFingerTapEnabled"), QStringLiteral("flingEnabled"), QStringLiteral("northLock"),
+                                                                QStringLiteral("maxPitch"), QStringLiteral("focalPoint"), QStringLiteral("rotateWhileScaling"),
+                                                                QStringLiteral("minZoom"), QStringLiteral("maxZoom"), QStringLiteral("mouseAsTouchScreen")}},
+                         {QStringLiteral("builtins"), QJsonArray{QStringLiteral("puck"), QStringLiteral("scaleBar"), QStringLiteral("compass"), QStringLiteral("attribution")}}};
     QJsonObject provider{{QStringLiteral("schemes"), QJsonArray::fromStringList(in.providerSchemes)},
                          {QStringLiteral("rangeRequests"), in.providerRangeRequests}};
     QJsonObject offline{{QStringLiteral("regions"), in.offlineRegions}};
@@ -120,6 +133,7 @@ QJsonObject capabilities(const CapabilityInputs& in)
                        {QStringLiteral("render"), render},
                        {QStringLiteral("scene"), scene},
                        {QStringLiteral("pick"), pick},
+                       {QStringLiteral("gestures"), gestures},
                        {QStringLiteral("provider"), provider},
                        {QStringLiteral("offline"), offline},
                        {QStringLiteral("surface"), surface},

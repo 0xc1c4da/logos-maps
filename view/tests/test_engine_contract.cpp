@@ -84,11 +84,15 @@ int main(int argc, char** argv)
     // DISPLAY (Xvfb in the nix check).
     if (!qEnvironmentVariableIsSet("QT_QUICK_BACKEND")) qputenv("QT_QUICK_BACKEND", "rhi");
     qputenv("QT_SCALE_FACTOR", "2");
+    // A fresh engine cache per run: the suite asserts that tiles reach the
+    // provider, which a warm cache (correctly) prevents.
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    // (QStandardPaths test mode resolves CacheLocation under $HOME/.qttest.)
+    qputenv("HOME", tmp.path().toLocal8Bit());
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QGuiApplication app(argc, argv);
     QStandardPaths::setTestModeEnabled(true);
-    QTemporaryDir tmp;
-    REQUIRE(tmp.isValid());
 
     // ── memory:// tile store: z0-2 solid tiles ───────────────────────────
     auto memory = std::make_shared<MemoryFileSource>();

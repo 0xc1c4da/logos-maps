@@ -45,6 +45,26 @@ QStringList SceneApplier::knownSources() const
     return out;
 }
 
+std::vector<SceneApplier::LayerInfo> SceneApplier::layerInfos() const
+{
+    std::vector<LayerInfo> out;
+    auto push = [&](const QString& id) {
+        auto it = m_layers.find(id);
+        if (it == m_layers.end()) return;
+        LayerInfo info;
+        info.id = id;
+        info.source = it->second.source;
+        info.sourceLayer = it->second.params.value(QStringLiteral("source-layer")).toString();
+        info.type = it->second.params.value(QStringLiteral("type")).toString();
+        out.push_back(std::move(info));
+    };
+    for (const QString& id : m_order) push(id);
+    for (const auto& [id, l] : m_layers) {
+        if (!m_order.contains(id)) push(id);
+    }
+    return out;
+}
+
 QStringList SceneApplier::knownLayers() const
 {
     QStringList out;
@@ -92,7 +112,7 @@ void SceneApplier::onFeatureStateChanged(const QJsonObject& payload)
     const QJsonValue featureIdV = payload.value(QStringLiteral("featureId"));
     const QJsonValue stateV = payload.value(QStringLiteral("state"));
     const QString featureId = featureIdV.isNull() ? QString() : featureIdV.toVariant().toString();
-    if (!hasFeatureState() || !m_map) {
+    if (!m_nativeFeatureState || !hasFeatureState() || !m_map) {
         emit featureStateFallback(sourceId, featureId, stateV);
         return;
     }
@@ -287,6 +307,7 @@ void SceneApplier::putSource(const QJsonObject& op)
     }
     m_sources[id] = std::move(def);
     if (m_map) m_map->addSource(id, sourceParams(id));
+    emit sourceUpdated(id);
 }
 
 void SceneApplier::replaceGeoJson(const QJsonObject& op)
@@ -311,6 +332,7 @@ void SceneApplier::replaceGeoJson(const QJsonObject& op)
     } else {
         m_map->addSource(id, sourceParams(id));
     }
+    emit sourceUpdated(id);
 }
 
 void SceneApplier::putImage(const QJsonObject& op)

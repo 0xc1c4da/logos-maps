@@ -56,6 +56,16 @@ set(MAPS_VIEW_SOURCES
     src/providers/memory_file_source.cpp
     src/providers/logos_file_source.h
     src/providers/logos_file_source.cpp
+    src/input/camera_target.h
+    src/input/gesture_controller.h
+    src/input/gesture_controller.cpp
+    src/input/map_camera_target.h
+    src/input/picker.h
+    src/input/picker.cpp
+    src/view/builtins.h
+    src/view/builtins.cpp
+    src/view/selection_overlay.h
+    src/view/selection_overlay.cpp
 )
 
 logos_module(

@@ -1,5 +1,7 @@
 #include "view/map_item.h"
 
+#include "input/gesture_controller.h"
+
 #include <QMapLibreQuickPrivate/texture_node_opengl_p.hpp>
 
 #include <QDebug>
@@ -202,6 +204,7 @@ void registerMapQmlTypes()
     if (done) return;
     done = true;
     qmlRegisterType<MapItem>("Maps.View", 1, 0, "MapItem");
+    qmlRegisterUncreatableType<GestureController>("Maps.View", 1, 0, "GestureController", QStringLiteral("owned by the view"));
 }
 
 }  // namespace maps::view

@@ -15,6 +15,7 @@
 // frameRendered(revision) (M6.7).
 #pragma once
 
+#include "view/capabilities.h"
 #include "view/core_client.h"
 
 #include <QJsonArray>
@@ -48,6 +49,13 @@ public:
     QStringList layerOrder() const { return m_order; }
     QStringList missingAnchors() const { return m_missingAnchors; }
     QStringList knownSources() const;
+    /// Scene layers as {id, source, sourceLayer, type}, in current order
+    /// (the engine's style JSON is the loaded document and does not list
+    /// runtime layers, so picking resolves them from here -- M8.13).
+    struct LayerInfo {
+        QString id, source, sourceLayer, type;
+    };
+    std::vector<LayerInfo> layerInfos() const;
     QStringList knownLayers() const;
 
     // Driven by MapItem::mapChanged through ViewController, or directly in tests.
@@ -59,6 +67,10 @@ public:
     void onRevisionPublished(const QJsonObject& payload);
     /// featureStateChanged event: native path (P2) or overlay fallback.
     void onFeatureStateChanged(const QJsonObject& payload);
+    /// M8.15: native feature state (P2) or the overlay fallback. Defaults to
+    /// the compiled capability; tests toggle it to compare the two paths.
+    void setNativeFeatureState(bool native) { m_nativeFeatureState = native; }
+    bool nativeFeatureState() const { return m_nativeFeatureState; }
 
     /// Apply a full {"v":1,"revision":N,"sessions":{...}} scene (replay).
     void applyScene(const QJsonObject& scene);
@@ -79,6 +91,8 @@ signals:
     void layersReconciled(const QStringList& order, const QStringList& missingAnchors);
     void sceneError(const QString& code, const QString& message);
     void featureStateFallback(const QString& sourceId, const QString& featureId, const QJsonValue& state);
+    /// A scene source was (re)defined or its GeoJSON replaced.
+    void sourceUpdated(const QString& sourceId);
 
 private:
     struct LayerDef {
@@ -114,6 +128,7 @@ private:
     std::map<QString, SourceDef> m_sources;
     std::map<QString, LayerDef> m_layers;
     std::map<QString, QJsonObject> m_images;
+    bool m_nativeFeatureState = hasFeatureState();
     QStringList m_order;
     QStringList m_missingAnchors;
 };

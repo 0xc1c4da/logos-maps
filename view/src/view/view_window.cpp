@@ -1,5 +1,6 @@
 #include "view/view_window.h"
 
+#include "input/gesture_controller.h"
 #include "view/map_item.h"
 
 #include <QDir>
@@ -24,6 +25,16 @@ ViewWindow::ViewWindow(QWindow* parent) : QQuickView(parent)
     setResizeMode(QQuickView::SizeRootObjectToView);
     setColor(Qt::black);
     engine()->addImportPath(qmlDirectory());
+}
+
+void ViewWindow::setGestureController(GestureController* controller)
+{
+    engine()->rootContext()->setContextProperty(QStringLiteral("gestures"), controller);
+}
+
+void ViewWindow::setContextObject(const QString& name, QObject* object)
+{
+    engine()->rootContext()->setContextProperty(name, object);
 }
 
 QString ViewWindow::pluginDirectory()
