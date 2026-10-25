@@ -4,7 +4,7 @@
 // core's module API, PROPs mirror its state, and layersChanged fires on every
 // core event so the view can refetch. Keep slots to <= 4 arguments; pass
 // structured data (layer definitions, GeoJSON) as one JSON string.
-class MapsUi
+class MapsView
 {
     SLOT(bool addLayer(QString layerId, QString layerJson))
     SLOT(bool removeLayer(QString layerId))

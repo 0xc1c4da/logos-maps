@@ -5,13 +5,13 @@ import Logos.Controls
 
 // Maps -- the view. Pure rendering: the layer registry lives in maps_core
 // (so any module can add layers programmatically); this view mirrors it
-// through the maps_ui backend replica and refetches on layersChanged.
+// through the maps_view backend replica and refetches on layersChanged.
 // Peer-supplied strings render as plain text, never as rich text.
 Item {
     id: root
 
-    // Typed replica of the C++ backend (see src/maps_ui.rep).
-    readonly property var backend: logos.module("maps_ui")
+    // Typed replica of the C++ backend (see src/maps_view.rep).
+    readonly property var backend: logos.module("maps_view")
     property bool ready: false
     readonly property string status: backend ? backend.status : ""
     readonly property int layerCount: backend ? backend.layerCount : 0
@@ -50,7 +50,7 @@ Item {
     Connections {
         target: logos
         function onViewModuleReadyChanged(moduleName, isReady) {
-            if (moduleName === "maps_ui") {
+            if (moduleName === "maps_view") {
                 root.ready = isReady && root.backend !== null
                 root.refresh()
             }
@@ -62,7 +62,7 @@ Item {
         function onLayersChanged() { root.refresh() }
     }
     Component.onCompleted: {
-        root.ready = root.backend !== null && logos.isViewModuleReady("maps_ui")
+        root.ready = root.backend !== null && logos.isViewModuleReady("maps_view")
         root.refresh()
     }
 
@@ -81,7 +81,7 @@ Item {
             spacing: Theme.spacing.medium
 
             LogosText {
-                objectName: "maps_ui.title"
+                objectName: "maps_view.title"
                 text: qsTr("Maps")
                 textFormat: Text.PlainText
                 color: Theme.palette.text
@@ -90,7 +90,7 @@ Item {
             }
             Item { Layout.fillWidth: true }
             LogosText {
-                objectName: "maps_ui.connection"
+                objectName: "maps_view.connection"
                 text: root.ready ? qsTr("%n layer(s)", "", root.layerCount) : qsTr("Connecting to backend...")
                 textFormat: Text.PlainText
                 color: root.ready ? Theme.palette.textSecondary : Theme.palette.warning
@@ -133,7 +133,7 @@ Item {
                     delegate: LogosListRow {
                         required property var modelData
                         width: ListView.view ? ListView.view.width : implicitWidth
-                        objectName: "maps_ui.layer." + modelData.id
+                        objectName: "maps_view.layer." + modelData.id
                         title: modelData.layer && modelData.layer.title ? String(modelData.layer.title) : String(modelData.id)
                         subtitle: String(modelData.id) + (modelData.layer && modelData.layer.kind ? "  -  " + String(modelData.layer.kind) : "")
                         accessory: LogosButton {
@@ -152,7 +152,7 @@ Item {
 
             LogosTextField {
                 id: layerIdField
-                objectName: "maps_ui.layerId"
+                objectName: "maps_view.layerId"
                 Layout.preferredWidth: 160
                 placeholderText: qsTr("layer id")
                 Keys.onReturnPressed: root.addLayerFromForm()
@@ -160,14 +160,14 @@ Item {
             }
             LogosTextField {
                 id: layerTitleField
-                objectName: "maps_ui.layerTitle"
+                objectName: "maps_view.layerTitle"
                 Layout.fillWidth: true
                 placeholderText: qsTr("title (optional)")
                 Keys.onReturnPressed: root.addLayerFromForm()
                 Keys.onEnterPressed: root.addLayerFromForm()
             }
             LogosButton {
-                objectName: "maps_ui.addLayer"
+                objectName: "maps_view.addLayer"
                 text: qsTr("Add layer")
                 variant: LogosButton.Variant.Primary
                 enabled: root.ready && layerIdField.text.trim().length > 0
@@ -176,7 +176,7 @@ Item {
         }
 
         LogosText {
-            objectName: "maps_ui.status"
+            objectName: "maps_view.status"
             text: qsTr("maps_core: ") + root.status
             textFormat: Text.PlainText
             color: Theme.palette.textSecondary

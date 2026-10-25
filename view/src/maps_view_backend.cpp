@@ -1,4 +1,4 @@
-#include "maps_ui_backend.h"
+#include "maps_view_backend.h"
 
 #include <QTimer>
 
@@ -6,37 +6,37 @@
 // modules(), with the Qt-typed maps_core client and its event accessors.
 #include "logos_sdk.h"
 
-bool MapsUiBackend::addLayer(QString layerId, QString layerJson)
+bool MapsViewBackend::addLayer(QString layerId, QString layerJson)
 {
     return modules().maps_core.addLayer(layerId, layerJson);
 }
 
-bool MapsUiBackend::removeLayer(QString layerId)
+bool MapsViewBackend::removeLayer(QString layerId)
 {
     return modules().maps_core.removeLayer(layerId);
 }
 
-bool MapsUiBackend::setFeatures(QString layerId, QString geojson)
+bool MapsViewBackend::setFeatures(QString layerId, QString geojson)
 {
     return modules().maps_core.setFeatures(layerId, geojson);
 }
 
-QString MapsUiBackend::getLayer(QString layerId)
+QString MapsViewBackend::getLayer(QString layerId)
 {
     return modules().maps_core.getLayer(layerId);
 }
 
-QString MapsUiBackend::getFeatures(QString layerId)
+QString MapsViewBackend::getFeatures(QString layerId)
 {
     return modules().maps_core.getFeatures(layerId);
 }
 
-QString MapsUiBackend::listLayers()
+QString MapsViewBackend::listLayers()
 {
     return modules().maps_core.listLayers();
 }
 
-void MapsUiBackend::onContextReady()
+void MapsViewBackend::onContextReady()
 {
     // Typed core events -> view. QtRO pushes every PROP change and signal to
     // the QML replica; the view refetches listLayers() on layersChanged.
@@ -48,12 +48,12 @@ void MapsUiBackend::onContextReady()
     scheduleRefresh(QStringLiteral("connected to maps_core"), 1000);
 }
 
-void MapsUiBackend::scheduleRefresh(const QString& what, int delayMs)
+void MapsViewBackend::scheduleRefresh(const QString& what, int delayMs)
 {
     QTimer::singleShot(delayMs, this, [this, what] { refresh(what); });
 }
 
-void MapsUiBackend::refresh(const QString& what)
+void MapsViewBackend::refresh(const QString& what)
 {
     setLayerCount(static_cast<int>(modules().maps_core.layerCount()));
     setStatus(what);

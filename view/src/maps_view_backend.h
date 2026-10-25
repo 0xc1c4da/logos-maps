@@ -1,12 +1,12 @@
 #pragma once
 
-#include "rep_maps_ui_source.h"
+#include "rep_maps_view_source.h"
 #include "logos_ui_plugin_context.h"
 
 /**
  * The Maps view backend. Runs in its own process (ui-host); the QML view in
  * qml/Main.qml talks to it through the Qt Remote Objects replica generated
- * from maps_ui.rep.
+ * from maps_view.rep.
  *
  * It owns no map state: maps_core does (so other modules can add layers
  * programmatically and this view reflects them). The backend forwards each
@@ -15,12 +15,12 @@
  * `layersChanged` signal plus the `layerCount` PROP.
  *
  * Derives:
- *   - MapsUiSimpleSource   -- generated from the .rep; implement its slots,
+ *   - MapsViewSimpleSource   -- generated from the .rep; implement its slots,
  *     feed its PROPs (setLayerCount(), setStatus()), emit its signals.
  *   - LogosUiPluginContext -- onContextReady() plus modules(): Qt-typed
  *     callers and event subscriptions for metadata.json "dependencies".
  */
-class MapsUiBackend : public MapsUiSimpleSource,
+class MapsViewBackend : public MapsViewSimpleSource,
                       public LogosUiPluginContext
 {
 public:

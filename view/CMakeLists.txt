@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(MapsUiPlugin LANGUAGES CXX)
+project(MapsViewPlugin LANGUAGES CXX)
 
 if(DEFINED ENV{LOGOS_MODULE_BUILDER_ROOT})
     include($ENV{LOGOS_MODULE_BUILDER_ROOT}/cmake/LogosModule.cmake)
@@ -16,10 +16,10 @@ string(JSON MODULE_NAME GET "${METADATA_JSON}" name)
 # generated_code/ are driven by logos_module().
 logos_module(
     NAME ${MODULE_NAME}
-    REP_FILE src/maps_ui.rep
+    REP_FILE src/maps_view.rep
     SOURCES
-        src/maps_ui_backend.h
-        src/maps_ui_backend.cpp
+        src/maps_view_backend.h
+        src/maps_view_backend.cpp
     INCLUDE_DIRS
         src
 )

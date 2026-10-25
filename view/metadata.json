@@ -1,5 +1,5 @@
 {
-  "name": "maps_ui",
+  "name": "maps_view",
   "display_name": "Maps",
   "version": "0.1.0",
   "type": "ui_qml",
@@ -7,11 +7,11 @@
   "category": "general",
   "description": "Maps: the map view. Renders the layers held by maps_core, which any module can add to programmatically.",
   "author": "0xc1c4da",
-  "main": "maps_ui_plugin",
+  "main": "maps_view_plugin",
   "icon": "src/icons/icon.png",
   "view": "qml/Main.qml",
   "dependencies": ["maps_core"],
-  "codegen": { "rep": "src/maps_ui.rep" },
+  "codegen": { "rep": "src/maps_view.rep" },
 
   "nix": {
     "packages": {

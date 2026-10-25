@@ -1,5 +1,5 @@
 {
-  description = "maps_ui - the Maps view: QML with a process-isolated C++ backend over maps_core";
+  description = "maps_view - the Maps view: QML with a process-isolated C++ backend over maps_core";
 
   inputs = {
     # Pinned to a full commit so a from-scratch build is reproducible. Inside
