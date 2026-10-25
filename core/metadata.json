@@ -5,15 +5,15 @@
   "type": "core",
   "interface": "universal",
   "category": "general",
-  "description": "Maps core: the layer registry behind the Maps app. Any module can add, update or remove map layers and their features. The Maps view and other subscribers follow its events.",
+  "description": "Maps core: the retained map scene behind the Maps app (docs/architecture.md). Any module publishes sources, layers and images into its own session through applyBatch; maps_core validates, coalesces and versions the scene, keeps the basemap catalogue and the view registry, and every Maps view replays it.",
   "author": "0xc1c4da",
   "main": "maps_core_plugin",
   "dependencies": [],
 
   "nix": {
     "packages": {
-      "build": [],
-      "runtime": []
+      "build": ["pkg-config"],
+      "runtime": ["nlohmann_json", "openssl"]
     },
     "external_libraries": [],
     "cmake": {

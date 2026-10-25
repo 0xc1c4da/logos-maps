@@ -1,0 +1,22 @@
+{
+  "publishedOps": [
+    "1/putSource:routing/trip:route",
+    "1/replaceGeoJson:routing/trip:route",
+    "1/putLayer:routing/trip:casing",
+    "1/putLayer:routing/trip:line",
+    "2/putSource:pois/nearby:pts",
+    "2/replaceGeoJson:pois/nearby:pts",
+    "2/putImage:pois/nearby:pin",
+    "2/putLayer:pois/nearby:pins",
+    "3/replaceGeoJson:pois/nearby:pts",
+    "3/putLayer:pois/nearby:pins",
+    "4/putLayer:routing/trip:casing",
+    "4/putLayer:routing/trip:line",
+    "5/removeLayer:pois/nearby:pins",
+    "5/removeSource:pois/nearby:pts",
+    "5/removeImage:pois/nearby:pin"
+  ],
+  "revision": 5,
+  "sceneDigest": "ff87ff131bf65b0fe978b22407f01a0a3692cb6f4fe9338f76d5af8990d17455",
+  "v": 1
+}

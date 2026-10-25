@@ -1,0 +1,26 @@
+{
+  "v": 1,
+  "id": "openfreemap/bright",
+  "name": "OpenFreeMap Bright",
+  "format": "mapbox-gl",
+  "style_url": "https://tiles.openfreemap.org/styles/bright",
+  "provider": "OpenFreeMap",
+  "attribution": {
+    "OpenFreeMap": "https://openfreemap.org",
+    "© OpenMapTiles": "https://openmaptiles.org",
+    "© OpenStreetMap contributors": "https://www.openstreetmap.org/copyright"
+  },
+  "profiles": ["online"],
+  "type": "default",
+  "light": "day",
+  "vehicle": ["car", "bicycle", "foot", "transit"],
+  "lang": "local",
+  "lang_key": "name:{lang}",
+  "keys": [],
+  "logo": "openfreemap.svg",
+  "anchors": { "labels": "waterway_line_label", "routes": "waterway_line_label" },
+  "zoom": [0, 20],
+  "patch": [
+    { "op": "glyphs", "value": "logos://maps/glyphs/{fontstack}/{range}.pbf" }
+  ]
+}

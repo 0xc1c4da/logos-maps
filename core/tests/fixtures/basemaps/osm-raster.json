@@ -1,0 +1,10 @@
+{
+  "id": "osm/standard",
+  "name": "OpenStreetMap Standard",
+  "format": "raster",
+  "tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  "tile_size": 256,
+  "provider": "OpenStreetMap",
+  "attribution": { "© OpenStreetMap contributors": "https://www.openstreetmap.org/copyright" },
+  "zoom": [0, 19]
+}

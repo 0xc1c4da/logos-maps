@@ -1,0 +1,24 @@
+{
+  "version": 8,
+  "name": "Mini Bright",
+  "glyphs": "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
+  "sprite": "https://tiles.openfreemap.org/sprites/ofm_f384/ofm",
+  "sources": {
+    "openmaptiles": { "type": "vector", "url": "https://tiles.openfreemap.org/planet" },
+    "hillshade": { "type": "raster-dem", "tiles": ["https://example.org/dem/{z}/{x}/{y}.png"], "tileSize": 512 }
+  },
+  "layers": [
+    { "id": "background", "type": "background", "paint": { "background-color": "#f8f4f0" } },
+    { "id": "water", "type": "fill", "source": "openmaptiles", "source-layer": "water", "paint": { "fill-color": "#a0c8f0" } },
+    { "id": "building", "type": "fill", "source": "openmaptiles", "source-layer": "building", "paint": { "fill-color": "#f2eae2" } },
+    { "id": "building-3d", "type": "fill-extrusion", "source": "openmaptiles", "source-layer": "building", "paint": { "fill-extrusion-color": "#f2eae2" } },
+    { "id": "waterway_line_label", "type": "symbol", "source": "openmaptiles", "source-layer": "waterway",
+      "layout": { "text-field": "{name}", "text-font": ["Noto Sans Italic"], "symbol-placement": "line" },
+      "paint": { "text-color": "#74aee9" } },
+    { "id": "place_label", "type": "symbol", "source": "openmaptiles", "source-layer": "place",
+      "layout": { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"] },
+      "paint": { "text-color": "#333" } },
+    { "id": "poi_label", "type": "symbol", "source": "openmaptiles", "source-layer": "poi",
+      "layout": { "text-field": ["coalesce", ["get", "name:en"], ["get", "name"]], "text-font": ["Noto Sans Regular"], "icon-image": "{class}" } }
+  ]
+}

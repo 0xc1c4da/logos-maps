@@ -1,0 +1,80 @@
+{
+  "v": 1,
+  "description": "Two sessions publish a route and POIs across several batches, including a no-op rebatch, a coalesced remove and a dropSession. The fake view replays the published ops and must end with the same scene as the store.",
+  "batches": [
+    {
+      "session": "routing/trip",
+      "caller": "routing",
+      "ops": [
+        { "op": "putSource", "id": "route", "type": "geojson",
+          "data": { "type": "FeatureCollection", "features": [
+            { "type": "Feature", "id": "r1", "geometry": { "type": "LineString", "coordinates": [[13.40, 52.52], [13.41, 52.53]] }, "properties": {} }
+          ] } },
+        { "op": "putLayer", "id": "casing", "type": "line", "source": "route",
+          "paint": { "line-color": "#ffffff", "line-width": 8 }, "placement": { "anchor": "routes" } },
+        { "op": "putLayer", "id": "line", "type": "line", "source": "route",
+          "paint": { "line-color": "#3366ff", "line-width": 5 }, "placement": { "above": "casing" } }
+      ]
+    },
+    {
+      "session": "pois/nearby",
+      "caller": "pois",
+      "ops": [
+        { "op": "putImage", "id": "pin", "pixelRatio": 2, "bytes": "iVBORw0KGgo=" },
+        { "op": "putSource", "id": "pts", "type": "geojson", "def": { "cluster": true, "clusterRadius": 40 },
+          "data": { "type": "FeatureCollection", "features": [
+            { "type": "Feature", "id": 1, "geometry": { "type": "Point", "coordinates": [13.40, 52.52] }, "properties": { "name": "A" } },
+            { "type": "Feature", "id": 2, "geometry": { "type": "Point", "coordinates": [13.42, 52.51] }, "properties": { "name": "B" } }
+          ] } },
+        { "op": "putLayer", "id": "pins", "type": "symbol", "source": "pts",
+          "layout": { "icon-image": "pin", "text-field": ["get", "name"] }, "placement": { "anchor": "labels" } },
+        { "op": "putLayer", "id": "tmp", "type": "circle", "source": "pts" },
+        { "op": "removeLayer", "id": "tmp" }
+      ]
+    },
+    {
+      "session": "routing/trip",
+      "caller": "routing",
+      "expectPublished": false,
+      "ops": [
+        { "op": "replaceGeoJson", "sourceId": "route",
+          "data": { "features": [
+            { "properties": {}, "geometry": { "coordinates": [[13.40, 52.52], [13.41, 52.53]], "type": "LineString" }, "type": "Feature", "id": "r1" }
+          ], "type": "FeatureCollection" } }
+      ]
+    },
+    {
+      "session": "pois/nearby",
+      "caller": "pois",
+      "ops": [
+        { "op": "patchFeatures", "sourceId": "pts",
+          "upsert": [ { "type": "Feature", "id": 2, "geometry": { "type": "Point", "coordinates": [13.43, 52.50] }, "properties": { "name": "B2" } },
+                      { "type": "Feature", "id": 3, "geometry": { "type": "Point", "coordinates": [13.39, 52.52] }, "properties": { "name": "C" } } ],
+          "remove": [1] },
+        { "op": "setPaint", "layerId": "pins", "props": { "text-color": "#222" } },
+        { "op": "setPaint", "layerId": "pins", "props": { "text-halo-width": 1 } },
+        { "op": "putLayer", "id": "bogus", "type": "fill", "source": "nope" }
+      ],
+      "expectRejected": [3]
+    },
+    {
+      "session": "routing/trip",
+      "caller": "routing",
+      "ops": [
+        { "op": "setFilter", "layerId": "line", "filter": ["==", ["get", "active"], true] },
+        { "op": "placeLayer", "layerId": "casing", "placement": { "top": true } },
+        { "op": "putSource", "id": "stops", "type": "geojson",
+          "data": { "type": "FeatureCollection", "features": [
+            { "type": "Feature", "id": "s1", "geometry": { "type": "Point", "coordinates": [13.405, 52.525] }, "properties": {} }
+          ] } },
+        { "op": "putLayer", "id": "stops", "type": "circle", "source": "stops", "paint": { "circle-radius": 4 } },
+        { "op": "removeSource", "id": "stops" }
+      ]
+    },
+    {
+      "session": "pois/nearby",
+      "caller": "pois",
+      "ops": [ { "op": "dropSession" } ]
+    }
+  ]
+}
