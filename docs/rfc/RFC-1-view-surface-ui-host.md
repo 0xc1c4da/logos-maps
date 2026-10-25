@@ -86,9 +86,17 @@ SIGTERM notifier already calls `app.quit()` on the main thread.
 
 - `tests/test_ui_host_gui.cpp`: spawns `ui-host --gui` with `QT_QPA_PLATFORM=offscreen`
   forced in the test environment (ui-host only *sets* `wayland` when `--surface-socket`
-  is given), loads a fixture plugin that opens a `QQuickWindow`, asserts `READY` is
-  printed and the window reaches `isExposed()`.
+  is given), loads a fixture plugin (`tests/test_gui_fixture.cpp`) that journals the
+  application class it was given and opens a `QQuickWindow` on the software scene graph,
+  asserts `READY` is printed, `quitOnLastWindowClosed` is off and the window reaches
+  `isExposed()`; a plain spawn journals `QCoreApplication` and opens nothing.
 - The existing `test_ui_host_unload` passes unchanged (it never passes `--gui`).
+
+## Status
+
+Implemented in `logos-view-module-runtime` (workspace branch, M6a): `ui-host/main.cpp`
+pre-scans `--gui`/`--surface-socket` before constructing the application, links
+`Qt6::Gui`; `ViewSpawnOptions` in `include/ViewModuleHost.h`.
 
 ## Alternatives considered
 

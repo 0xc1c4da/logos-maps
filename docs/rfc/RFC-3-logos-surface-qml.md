@@ -80,3 +80,33 @@ its own backend process produced.
 - `tests/sandbox/`: extend the evil-app fixture to attempt `module: "other_module"`;
   assert `error("tokenMismatch")` and no surface.
 - RFC-4's smoke check (`view-surface-test`) exercises the happy path end to end.
+
+## Status
+
+Implemented in `logos-basecamp` (workspace branch, M6c): `app/surface/LogosSurfaceItem.{h,cpp}`,
+`qt_add_qml_module(LogosBasecamp URI Logos.Surface ...)` in `app/CMakeLists.txt`,
+`"Surface"` in `SharedLogosModules.h`. Deviations from the draft, all recorded for the
+upstream version:
+
+- **Registration.** Basecamp's `Logos.*` modules are static `qt_add_qml_module` targets
+  registered process-wide from the executable, not installed under `lib/Logos/<Name>`;
+  `Logos.Surface` is registered the same way (there is no `qmldir`/plugin dir to ship,
+  and the interceptor's `Logos/Surface` redirect is a no-op that only has to be allowed).
+- **Module binding.** The module an item may bind is pinned per QML engine
+  (`LogosSurfaceItem::bindEngine(engine, module)` from `PluginLoader::createSandboxedView`,
+  stored as a dynamic property on the engine, unreachable from QML) rather than looked up
+  through `LogosQmlBridge`; `module:` naming anything else is `tokenMismatch`.
+- **`session`** is forwarded by the app itself through its own `.rep` contract; the host
+  does not set `LOGOS_VIEW_SESSION`. It still prefixes `viewId`.
+- **`placeholderColor`** (default `#1e1e1e`) added: the colour painted until the first
+  frame and after `clientExited`.
+- **Re-attach.** After `clientExited` the item keeps waiting on its module; if the same
+  token binds again (a host restart under the same spawn) it re-attaches.
+- **`wl_output.enter`.** Qt only sends `enter` from the first frame-callback round after
+  the surface has content, and marks it done even if the client has not yet bound the
+  per-window output global — so a client can miss it and stay at the default output's
+  scale. The item therefore (a) relies on RFC-4's default output already advertising the
+  primary screen's scale, and (b) for up to 3 s after attaching re-adds its view to the
+  window output and requests a frame until `bufferScale == scaleFactor`.
+- The evil-app sandbox fixture is not extended; the cross-module refusal is covered by
+  `tests/view_surface_test.cpp` (`itemRefusesOtherModules`, `itemExposesNoTokenToQml`).

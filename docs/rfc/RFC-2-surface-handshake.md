@@ -79,10 +79,13 @@ into `m_surfaceToken` before emitting `ready()`. Hosts that do not care ignore i
 ### 6. Host-side accessor
 
 `LogosQmlBridge::setViewModuleSurface(const QString& module, const QString& token)` and
-`Q_INVOKABLE QString viewModuleSurfaceToken(const QString& module) const` so that
-host QML (RFC-3) can bind a module name to its surface without reaching into
-`ViewModuleHost`. Sandboxed app QML never sees the token: `Logos.Surface` resolves it
-inside the host from `module` (RFC-3).
+`QString viewModuleSurfaceToken(const QString& module) const`, so that the host's
+`Logos.Surface` item (RFC-3) can bind a module name to its surface without reaching into
+`ViewModuleHost`. Neither is `Q_INVOKABLE` or a slot: the bridge is the `logos` context
+property of sandboxed app QML, and -- as with the bridge's intent host-side API -- their
+absence from the metaobject is what keeps the token out of app QML. `Logos.Surface`
+resolves it inside the host from `module`. The token is dropped with the module
+(`notifyViewModuleCrashed`).
 
 ## Sequence
 
@@ -117,6 +120,23 @@ sequenceDiagram
 
 ## Tests
 
-- `test_view_module_host_surface.cpp`: spawn with `{gui=true}` under offscreen, assert
-  `surfaceToken()` is 32 hex chars after `ready()`, that `READY` carries the same token,
-  and that a plain spawn leaves it empty.
+- `tests/test_ui_host_gui.cpp` (shared with RFC-1): spawn with `{gui=true}` under
+  offscreen, assert `surfaceToken()` is 32 hex chars after `ready()`, that the child set
+  `app_id = logos-view-<token>` before the plugin ran (journalled from inside the child),
+  that two spawns never share a token, that a plain spawn leaves it empty, and that the
+  bridge accessors are absent from the metaobject.
+
+## Status
+
+Implemented in `logos-view-module-runtime` (workspace branch, M6a, amended in M6c).
+Deviations from the draft:
+
+- The bridge accessor is a plain C++ method, not `Q_INVOKABLE` (§6).
+- `ViewModuleHost::surfaceToken()` returns the minted token as soon as `spawn()`
+  returns, not only after `READY`: the compositor (RFC-4) must `expect()` the token
+  before the child's first `wl_surface.commit`, which can precede the readiness line.
+  `surfaceTokenConfirmed()` says whether the child echoed it back in `READY`.
+- `ui-host --surface-socket` sets `QT_WAYLAND_DISABLE_WINDOWDECORATION=1`; Qt's
+  client-side decoration would otherwise paint a title bar into the module's buffer.
+- Basecamp binds the surface to its item by module name pinned per QML engine (RFC-3
+  status) and uses the bridge accessor for the record only.

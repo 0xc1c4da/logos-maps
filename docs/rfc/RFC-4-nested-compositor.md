@@ -99,3 +99,44 @@ received touch points over its `.rep`). Asserts: toplevel bound within 2 s; item
 reported by the client; `transport` is `wayland-shm` under offscreen (dmabuf needs a GPU);
 a second fixture client with a wrong `app_id` is refused. This check is the acceptance
 test for RFC-1..5 (spec §16.6).
+
+## Status
+
+Implemented in `logos-basecamp` (workspace branch, M6c): `app/surface/SurfaceCompositor.{h,cpp}`,
+`LOGOS_HAVE_WAYLAND_COMPOSITOR` in `app/CMakeLists.txt` (Linux; `Qt6::WaylandCompositor`
+required there, compiled out elsewhere). Spike A settled §4 on **A1**: the output's
+window is the tab's `QQuickWidget::quickWindow()` and `Logos.Surface` is an ordinary item
+in the sandboxed scene. Deviations and findings against Qt 6.9 `qtwayland`:
+
+- **Admission at `surfaceRequested`.** `QWaylandCompositor` has no `clientConnected`
+  signal; the pid gate runs on `surfaceRequested` (the first thing a client does after
+  binding globals) and refused clients are remembered so a toplevel they manage to
+  create before the deferred `close()` lands is not counted twice. `close()` is always
+  deferred (`QTimer::singleShot(0)`) — destroying a client inside its own request
+  dispatch is unsafe.
+- **Admission at the toplevel** happens when `appIdChanged` fires, falling back to
+  `hasContentChanged`, because Qt clients set `app_id` after `get_toplevel`.
+- **Default output.** Qt wayland clients will not map a window before they have a
+  `wl_output`, and the first `view_surface` load creates the per-window output only after
+  the client has connected. The compositor therefore always has a headless default
+  `QWaylandOutput` (1920×1080@60, no window) whose `scaleFactor` is the primary screen's
+  DPR; per-window `QWaylandQuickOutput`s (`sizeFollowsWindow`, scale = ⌈DPR⌉, updated on
+  `screenChanged`) are created by `ensureOutput(window)` when an item attaches, and
+  `QWaylandQuickItem::updateWindow` requires one to exist before `setShellSurface`.
+- **Frame pacing** is Qt's: `QWaylandQuickOutput` issues frame callbacks from the
+  window's `afterRendering`; visibility gating is done by `Logos.Surface` moving its view
+  off the output (`QWaylandView::setOutput(nullptr)`) while invisible.
+- **`expect(module, token, pid)`** takes the module name too (one surface per module;
+  a re-spawn replaces the previous token), and `forget` is routed through
+  `PluginLoader::stopViewModuleHost`, which `UIPluginManager` calls on both unload paths.
+- **Unavailable, not fatal:** no writable `XDG_RUNTIME_DIR` → `isAvailable() == false`,
+  modules are spawned without `--surface-socket` and `Logos.Surface` reports `noCompositor`.
+- **Headless.** With `QT_QPA_PLATFORM=offscreen` the host has no EGL; shm buffers go
+  through `createTextureFromImage` and work with the software scene graph. The client must
+  also use `QT_QUICK_BACKEND=software` in that configuration.
+- **Test shape.** §Tests is realised as `tests/view_surface_test.cpp` in the `unit-tests`
+  check rather than a separate `view-surface-test` derivation with a fixture module: the
+  same binary is the Wayland client (`--surface-client <token>`), so the check needs no
+  built module and runs in ~1 s. It covers everything listed above plus client exit,
+  unknown pid, visibility gating and clean teardown. A real-app smoke test with
+  `maps_view` is spec §16.7 (M7).

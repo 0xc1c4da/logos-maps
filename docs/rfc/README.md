@@ -9,11 +9,11 @@ repository), then offered upstream.
 
 | RFC | Repository | Summary | Status |
 |---|---|---|---|
-| [RFC-1](RFC-1-view-surface-ui-host.md) | `logos-view-module-runtime` | `ui-host --gui`: a `QGuiApplication` process for modules that declare `view_surface` | draft |
-| [RFC-2](RFC-2-surface-handshake.md) | `logos-view-module-runtime` | Surface handshake: `--surface-socket`, `app_id` token, `READY ... SURFACE <token>`, `ViewModuleHost::surfaceToken()` | draft |
-| [RFC-3](RFC-3-logos-surface-qml.md) | `logos-basecamp` | `Logos.Surface` host QML type available to sandboxed app QML | draft |
-| [RFC-4](RFC-4-nested-compositor.md) | `logos-basecamp` | Nested Wayland compositor (`SurfaceCompositor`) on a private socket | draft |
-| [RFC-5](RFC-5-lifecycle-and-metadata.md) | `logos-module-builder`, `logos-basecamp` | `view_surface` metadata key; surface lifecycle and visibility pacing | draft |
+| [RFC-1](RFC-1-view-surface-ui-host.md) | `logos-view-module-runtime` | `ui-host --gui`: a `QGuiApplication` process for modules that declare `view_surface` | implemented (workspace) |
+| [RFC-2](RFC-2-surface-handshake.md) | `logos-view-module-runtime` | Surface handshake: `--surface-socket`, `app_id` token, `READY ... SURFACE <token>`, `ViewModuleHost::surfaceToken()` | implemented (workspace) |
+| [RFC-3](RFC-3-logos-surface-qml.md) | `logos-basecamp` | `Logos.Surface` host QML type available to sandboxed app QML | implemented (workspace) |
+| [RFC-4](RFC-4-nested-compositor.md) | `logos-basecamp` | Nested Wayland compositor (`SurfaceCompositor`) on a private socket | implemented (workspace) |
+| [RFC-5](RFC-5-lifecycle-and-metadata.md) | `logos-module-builder`, `logos-basecamp` | `view_surface` metadata key; surface lifecycle and visibility pacing | implemented (workspace) |
 | [RFC-6](RFC-6-other-transports.md) | platform | Other `SurfaceTransport`s: macOS, Windows, in-process `ViewContainer` (informative) | informative |
 
 Design invariants every RFC preserves (spec M3.1–M3.3):

@@ -70,3 +70,22 @@ Rules:
 ## Compatibility
 
 A `ui_qml` module without `view_surface` is unaffected by every rule above.
+
+## Status
+
+- **Part A** implemented in `logos-module-builder` (`6a3994f`): `lib/parseMetadata.nix`
+  validates `view_surface` (boolean, `ui_qml` with `main` only, not a platform overlay)
+  and carries it into the resolved metadata; documented in `docs/configuration.md`,
+  `templates/ui-qml-backend/metadata.json` shows the key; 8 assertions in
+  `tests/test-parse-metadata.nix`.
+- **Part B** implemented in `logos-basecamp` (M6c). `UIPluginManager` reads
+  `view_surface` from the installed module's `metadata.json`; `PluginLoader` spawns with
+  `gui = true` and the compositor socket, registers `expect()` right after `spawn()`
+  (the token is known from spawn — RFC-2 deviation), and `stopViewModuleHost` does
+  `forget()` before `stop()` on both unload paths (rule 4). Rules 1–3 and 5 are
+  exercised by `tests/view_surface_test.cpp`: no frame callbacks while invisible, host-
+  driven resize at scale, buffer at DPR 2, `clientExited` on exit. Rule 3's live DPR
+  change is implemented (`screenChanged` → output `scaleFactor`) but not covered by a
+  test; the offscreen platform has one screen.
+- The **spawned** state's "may open its window" is what `maps_view` does when the
+  compositor is unavailable; under Basecamp the window is the surface.
