@@ -1,0 +1,145 @@
+From: Logos Maps <maps@logos.co>
+Subject: [PATCH] Quick: TextureNodeOpenGL restores the scene graph's framebuffer and stops re-allocating per frame
+
+render() read GL_FRAMEBUFFER_BINDING only after updateRenderer() had
+already bound the map's own framebuffer, so the "restore" at the end
+re-bound that framebuffer, and did so after endExternalCommands(), undoing
+the scene graph's own state resync. With the RHI's state cache believing
+the window's framebuffer was still bound, the next render pass (clear and
+QML items) landed in the map's colour texture instead of the window: the
+texture read back as the window's clear colour and the map never reached
+the screen in some hosts (seen with a QQuickWindow on the Wayland and
+offscreen platforms; Qt 6.9).
+
+Also:
+- updateRenderer() is only called when size, pixel ratio or framebuffer
+  changed. The OpenGL backend deletes and re-creates the colour texture on
+  every call, which per frame meant a full-size texture allocation each
+  frame.
+- The QSGTexture wrapper is only re-created when the wrapped texture id or
+  its size changed, and the previous wrapper is deleted; before, a new
+  wrapper leaked every frame (the node does not own MapLibre's texture, so
+  setTexture() never released the old one).
+
+Mandatory for maps_view (M14.1): MapItem, snapshot read-back (section 16.7).
+
+Upstream base: maplibre/maplibre-native-qt c3485f3 (docs/architecture.md section 14.1).
+---
+ src/quick/texture_node_opengl.cpp   | 65 ++++++++++++++++++++++++-------------
+ src/quick/texture_node_opengl_p.hpp |  7 ++++
+ 2 files changed, 50 insertions(+), 22 deletions(-)
+---
+diff --git a/src/quick/texture_node_opengl.cpp b/src/quick/texture_node_opengl.cpp
+index b8d28cf6..17828fe9 100644
+--- a/src/quick/texture_node_opengl.cpp
++++ b/src/quick/texture_node_opengl.cpp
+@@ -56,48 +56,69 @@ void TextureNodeOpenGL::render(QQuickWindow *window) {
+     // Update map size if needed - pass logical size, mbgl::Map handles DPI internally
+     m_map->resize(m_size, m_pixelRatio);
+ 
+-    // CRITICAL: Set up framebuffer for texture sharing before rendering
+     QOpenGLFunctions *gl = glContext->functions();
+-    if (m_fbo == 0) {
+-        gl->glGenFramebuffers(1, &m_fbo);
+-    }
+ 
+-    // Update the size
+-    m_map->updateRenderer(m_size, m_pixelRatio, m_fbo);
+-
+-    // Save and restore OpenGL state to prevent conflicts
++    // The scene graph's framebuffer binding, saved before anything below
++    // touches it: updateRenderer() binds the map's framebuffer, so reading
++    // the binding after it would only ever restore that.
+     GLint prevFbo{};
+     gl->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+ 
+-    // Begin external commands before MapLibre render
++    // Everything from here until endExternalCommands() is raw OpenGL the
++    // scene graph does not know about.
+     window->beginExternalCommands();
+ 
++    // CRITICAL: Set up framebuffer for texture sharing before rendering
++    if (m_fbo == 0) {
++        gl->glGenFramebuffers(1, &m_fbo);
++    }
++
++    // (Re)create the colour attachment only when the target changed. The
++    // backend allocates a fresh texture on every call, so calling this per
++    // frame would re-allocate a full-size texture each time.
++    if (m_size != m_rendererSize || m_pixelRatio != m_rendererPixelRatio || m_fbo != m_rendererFbo) {
++        m_map->updateRenderer(m_size, m_pixelRatio, m_fbo);
++        m_rendererSize = m_size;
++        m_rendererPixelRatio = m_pixelRatio;
++        m_rendererFbo = m_fbo;
++    }
++
+     m_map->render();
+ 
+     // Ensure we flush the OpenGL commands
+     gl->glFlush();
+ 
++    // Put the scene graph's framebuffer back before handing control to it:
++    // its state tracking assumes nothing changed behind its back, and a
++    // restore after endExternalCommands() would undo its own resync.
++    gl->glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
++
+     // End external commands after MapLibre render
+     window->endExternalCommands();
+ 
+-    // Restore previous framebuffer
+-    gl->glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+-
+     // Try to get MapLibre's OpenGL framebuffer texture ID for zero-copy sharing
+     const GLuint maplibreTextureId = m_map->getFramebufferTextureId();
+     if (maplibreTextureId > 0) {
+-        // Wrap it directly as QSGTexture (zero-copy!)
+         const QSize physicalSize = m_size * m_pixelRatio;
+-        QSGTexture *qtTexture = QNativeInterface::QSGOpenGLTexture::fromNative(
+-            maplibreTextureId, window, physicalSize, QQuickWindow::TextureHasAlphaChannel);
+-
+-        if (qtTexture != nullptr) {
+-            setTexture(qtTexture);
+-            setRect(QRectF(QPointF(), m_size));
+-            setFiltering(QSGTexture::Linear);
+-            setOwnsTexture(false); // Don't delete MapLibre's texture!
+-            markDirty(QSGNode::DirtyMaterial);
++        // Wrap it as a QSGTexture (zero-copy); a new wrapper only when the
++        // texture or its size changed, and the previous wrapper is released
++        // (the node does not own MapLibre's texture, so it never would).
++        if (texture() == nullptr || maplibreTextureId != m_wrappedTextureId || physicalSize != m_wrappedSize) {
++            QSGTexture *qtTexture = QNativeInterface::QSGOpenGLTexture::fromNative(
++                maplibreTextureId, window, physicalSize, QQuickWindow::TextureHasAlphaChannel);
++
++            if (qtTexture != nullptr) {
++                QSGTexture *previous = texture();
++                setOwnsTexture(false); // Don't delete MapLibre's texture!
++                setTexture(qtTexture);
++                delete previous;
++                m_wrappedTextureId = maplibreTextureId;
++                m_wrappedSize = physicalSize;
++                setFiltering(QSGTexture::Linear);
++            }
+         }
++        setRect(QRectF(QPointF(), m_size));
++        markDirty(QSGNode::DirtyMaterial);
+     }
+ }
+ 
+diff --git a/src/quick/texture_node_opengl_p.hpp b/src/quick/texture_node_opengl_p.hpp
+index a9364f13..c090992f 100644
+--- a/src/quick/texture_node_opengl_p.hpp
++++ b/src/quick/texture_node_opengl_p.hpp
+@@ -22,6 +22,13 @@ public:
+ private:
+     bool m_rendererBound{};
+     GLuint m_fbo{};
++    // What the renderer was last configured for (see render()).
++    QSize m_rendererSize;
++    qreal m_rendererPixelRatio{};
++    GLuint m_rendererFbo{};
++    // The MapLibre texture the current QSGTexture wraps.
++    GLuint m_wrappedTextureId{};
++    QSize m_wrappedSize;
+ };
+ 
+ } // namespace QMapLibre

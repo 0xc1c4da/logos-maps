@@ -9,11 +9,11 @@ repository), then offered upstream.
 
 | RFC | Repository | Summary | Status |
 |---|---|---|---|
-| [RFC-1](RFC-1-view-surface-ui-host.md) | `logos-view-module-runtime` | `ui-host --gui`: a `QGuiApplication` process for modules that declare `view_surface` | implemented (workspace) |
-| [RFC-2](RFC-2-surface-handshake.md) | `logos-view-module-runtime` | Surface handshake: `--surface-socket`, `app_id` token, `READY ... SURFACE <token>`, `ViewModuleHost::surfaceToken()` | implemented (workspace) |
-| [RFC-3](RFC-3-logos-surface-qml.md) | `logos-basecamp` | `Logos.Surface` host QML type available to sandboxed app QML | implemented (workspace) |
-| [RFC-4](RFC-4-nested-compositor.md) | `logos-basecamp` | Nested Wayland compositor (`SurfaceCompositor`) on a private socket | implemented (workspace) |
-| [RFC-5](RFC-5-lifecycle-and-metadata.md) | `logos-module-builder`, `logos-basecamp` | `view_surface` metadata key; surface lifecycle and visibility pacing | implemented (workspace) |
+| [RFC-1](RFC-1-view-surface-ui-host.md) | `logos-view-module-runtime` | `ui-host --gui`: a `QGuiApplication` process for modules that declare `view_surface` | implemented at `ee5eefb` |
+| [RFC-2](RFC-2-surface-handshake.md) | `logos-view-module-runtime` | Surface handshake: `--surface-socket`, `app_id` token, `READY ... SURFACE <token>`, `ViewModuleHost::surfaceToken()` | implemented at `ee5eefb` |
+| [RFC-3](RFC-3-logos-surface-qml.md) | `logos-basecamp` | `Logos.Surface` host QML type available to sandboxed app QML | implemented at `37c9a57` |
+| [RFC-4](RFC-4-nested-compositor.md) | `logos-basecamp` | Nested Wayland compositor (`SurfaceCompositor`) on a private socket | implemented at `37c9a57` |
+| [RFC-5](RFC-5-lifecycle-and-metadata.md) | `logos-module-builder`, `logos-basecamp` | `view_surface` metadata key; surface lifecycle and visibility pacing | implemented at `6a3994f` (builder) + `37c9a57` (Basecamp) |
 | [RFC-6](RFC-6-other-transports.md) | platform | Other `SurfaceTransport`s: macOS, Windows, in-process `ViewContainer` (informative) | informative |
 
 Design invariants every RFC preserves (spec M3.1–M3.3):
@@ -28,3 +28,28 @@ Design invariants every RFC preserves (spec M3.1–M3.3):
 Vocabulary: a **view module** is a `ui_qml` module; its **backend** runs in `ui-host`;
 a **surface** is the GPU buffer the backend renders and the host shows; the **transport**
 moves it (RFC-4: Wayland).
+
+## Branches and the PRs to open
+
+Each repository has a local branch `rfc/view-surface` at the commit the maps tests
+were run against (spec §16.6/§16.7, `view/tests/basecamp-surface.mjs`, `view/tests/logosctl/e2e.sh`):
+
+| Repository | `rfc/view-surface` | Upstream base | RFC commits | PR |
+|---|---|---|---|---|
+| `logos-view-module-runtime` | `ee5eefb` | `a04b463` (main) | `f8f9424` (RFC-1, RFC-2), `ee5eefb` (RFC-2 amendments) | one PR, two commits |
+| `logos-module-builder` | `6a3994f` | `8f56bf8` (main) | `6a3994f` (RFC-5 part A) | one PR; the branch also carries three unrelated local commits (`46f4990`, `8b6d681`, `6e3f7a5`, nim packaging) that sit below it — `6a3994f` cherry-picks cleanly onto `8f56bf8`, so the PR can be opened from a rebased copy |
+| `logos-basecamp` | `37c9a57` | `572f722` (main) | `37c9a57` (RFC-3, RFC-4, RFC-5 part B) | one PR; the branch sits on `5454a52` (dev build takes its GL stack from the closure), which is a prerequisite for running the dev launcher with GL at all and should land first or be included — `37c9a57` cherry-picks cleanly onto `572f722` |
+
+Order: runtime first (RFC-1/2 are what Basecamp links against), builder next (RFC-5 A
+is independent and tiny), Basecamp last with its `logos-view-module-runtime` input
+bumped to the merged runtime commit. Nothing is pushed from this workspace; the
+branches are local.
+
+What was verified before offering them (all on Qt 6.9.2 from the SDK's nixpkgs, Linux):
+
+- runtime `unit-tests` (handshake, `--gui`, token), builder `tests/test-parse-metadata.nix`
+  (`view_surface`), Basecamp `unit-tests` incl. `tests/view_surface_test.cpp`.
+- `maps_view` in Basecamp offscreen (`nix run view#ui-tests`) and live on a Wayland
+  desktop: surface bound, `wayland-shm`, frames visible, teardown clean.
+- Not verified: `wayland-dmabuf` (software GL only on this host, spec O11), macOS/Windows
+  (RFC-6 is informative), live DPR change (RFC-5 rule 3).

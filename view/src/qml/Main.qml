@@ -2,14 +2,16 @@ import QtQuick
 import QtQuick.Layouts
 import Logos.Theme
 import Logos.Controls
+import Logos.Surface
 
 // Maps -- the host-side view (docs/architecture.md section 12.3).
 //
-// The map itself is rendered by the maps_view process into its own window
-// (RFC-1); this QML only hosts that surface and the chrome around it. Until
-// the host ships Logos.Surface (RFC-3, M7) the surface slot below shows the
-// view's status and the attribution the backend reports, so the module is
-// loadable on today's Basecamp without drawing anything it should not.
+// The map is rendered by the maps_view process (RFC-1); this QML only hosts
+// its surface and the chrome around it. The surface arrives through the
+// host's Logos.Surface item (RFC-3): Basecamp composites the backend's
+// buffer into this tab, and nothing of the engine runs in the host process.
+// On a host without a compositor (RFC-3 "noCompositor") the backend opens
+// its own window instead and the slot below shows the view's status.
 // Peer-supplied strings render as plain text, never as rich text.
 Item {
     id: root
@@ -19,9 +21,11 @@ Item {
     property bool ready: false
     readonly property string status: backend ? backend.status : ""
     readonly property string viewId: backend ? backend.viewId : ""
-    readonly property string surfaceToken: backend ? backend.surfaceToken : ""
     property string attribution: ""
-    property var viewState: ({})
+    // Parsed section 7.5 view state; a binding, so the initial value counts too.
+    readonly property var viewState: parseState(backend ? backend.viewStateJson : "")
+    // Last Logos.Surface error code ("" while the surface is fine).
+    property string surfaceError: ""
 
     Connections {
         target: logos
@@ -29,7 +33,7 @@ Item {
             if (moduleName === "maps_view") {
                 root.ready = isReady && root.backend !== null
                 if (root.ready)
-                    root.backend.setSize(surfaceSlot.width, surfaceSlot.height, Screen.devicePixelRatio)
+                    root.backend.setSize(surface.width, surface.height, Screen.devicePixelRatio)
             }
         }
     }
@@ -37,30 +41,48 @@ Item {
         target: root.backend
         ignoreUnknownSignals: true
         function onAttributionChanged(html) { root.attribution = String(html) }
-        function onViewStateJsonChanged() {
-            try { root.viewState = JSON.parse(String(root.backend.viewStateJson)) } catch (e) { root.viewState = ({}) }
-        }
+    }
+
+    function parseState(json) {
+        try { return json ? JSON.parse(String(json)) : ({}) } catch (e) { return ({}) }
+    }
+
+    // The attribution is HTML (links, entities); shown as plain text.
+    function plainText(html) {
+        return String(html).replace(/<[^>]*>/g, "")
+            .replace(/&copy;/g, "\u00a9").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
     }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // RFC-3 slot: M7 replaces this Item with
-        //   Logos.Surface { module: "maps_view"; session: "default" }
-        Rectangle {
-            id: surfaceSlot
+        // The surface slot. Size and DPR reach the backend as xdg configure
+        // events from the host (RFC-5 rule 2); setSize is informative and
+        // only matters on the no-compositor fallback.
+        Surface {
+            id: surface
+            objectName: "maps.surface"   // tests/basecamp-surface.mjs
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: Theme.palette.background
+            module: "maps_view"
+            session: "basecamp/main"
+            placeholderColor: Theme.palette.background
             onWidthChanged: if (root.ready) root.backend.setSize(width, height, Screen.devicePixelRatio)
             onHeightChanged: if (root.ready) root.backend.setSize(width, height, Screen.devicePixelRatio)
+            onError: (code) => root.surfaceError = code
+            onReadyChanged: if (ready) root.surfaceError = ""
 
+            // Status until the first frame, or when the surface is gone.
             Column {
                 anchors.centerIn: parent
                 spacing: 8
+                visible: !surface.ready
                 Text {
-                    text: root.ready ? qsTr("maps_view: %1").arg(root.status) : qsTr("Starting maps view…")
+                    text: root.surfaceError.length > 0
+                          ? qsTr("maps_view surface: %1").arg(root.surfaceError)
+                          : root.ready ? qsTr("maps_view: %1").arg(root.status) : qsTr("Starting maps view…")
                     color: Theme.palette.text
                     textFormat: Text.PlainText
                     horizontalAlignment: Text.AlignHCenter
@@ -73,8 +95,22 @@ Item {
                     textFormat: Text.PlainText
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
+            }
+
+            // Camera readout over the map (section 7.5 view state).
+            Rectangle {
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.margins: 8
+                visible: surface.ready && root.viewState && root.viewState.camera !== undefined
+                width: cameraText.implicitWidth + 12
+                height: cameraText.implicitHeight + 6
+                radius: 3
+                color: Theme.palette.backgroundSecondary
+                opacity: 0.85
                 Text {
-                    visible: root.viewState && root.viewState.camera !== undefined
+                    id: cameraText
+                    anchors.centerIn: parent
                     text: root.viewState && root.viewState.camera
                           ? qsTr("z %1  @ %2, %3").arg(Number(root.viewState.camera.zoom).toFixed(2))
                                 .arg(Number(root.viewState.camera.center[0]).toFixed(4))
@@ -82,7 +118,7 @@ Item {
                           : ""
                     color: Theme.palette.textSecondary
                     textFormat: Text.PlainText
-                    anchors.horizontalCenter: parent.horizontalCenter
+                    font.pixelSize: 11
                 }
             }
         }
@@ -98,7 +134,7 @@ Item {
                 id: attributionText
                 anchors.fill: parent
                 anchors.margins: 4
-                text: root.attribution.replace(/<[^>]*>/g, "")
+                text: root.plainText(root.attribution)
                 color: Theme.palette.textTertiary
                 textFormat: Text.PlainText
                 elide: Text.ElideRight

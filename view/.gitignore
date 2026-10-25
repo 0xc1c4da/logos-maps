@@ -2,3 +2,8 @@ result
 result-*
 build/
 .direnv/
+
+# Basecamp dev launcher state (nix run . / .#ui-tests)
+.logos-basecamp-dev/
+# e2e.sh default out-links
+.result-*

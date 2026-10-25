@@ -1,6 +1,6 @@
 # RFC-3: `Logos.Surface` — a host QML type that shows a module's surface
 
-**Repository:** `logos-basecamp` (and the design system's vetted module list) · **Status:** draft · **Depends on:** RFC-2, RFC-4
+**Repository:** `logos-basecamp` (and the design system's vetted module list) · **Status:** implemented (workspace, see §Status) · **Depends on:** RFC-2, RFC-4
 
 ## Problem
 
@@ -83,7 +83,7 @@ its own backend process produced.
 
 ## Status
 
-Implemented in `logos-basecamp` (workspace branch, M6c): `app/surface/LogosSurfaceItem.{h,cpp}`,
+Implemented in `logos-basecamp` at `37c9a57` (branch `rfc/view-surface`, M6c): `app/surface/LogosSurfaceItem.{h,cpp}`,
 `qt_add_qml_module(LogosBasecamp URI Logos.Surface ...)` in `app/CMakeLists.txt`,
 `"Surface"` in `SharedLogosModules.h`. Deviations from the draft, all recorded for the
 upstream version:

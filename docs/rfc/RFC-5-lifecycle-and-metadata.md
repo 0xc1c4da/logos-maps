@@ -1,6 +1,6 @@
 # RFC-5: `view_surface` metadata key and surface lifecycle
 
-**Repositories:** `logos-module-builder`, `logos-basecamp` · **Status:** draft · **Depends on:** RFC-1..4
+**Repositories:** `logos-module-builder`, `logos-basecamp` · **Status:** implemented (workspace, see §Status) · **Depends on:** RFC-1..4
 
 ## Part A — `metadata.json`: `view_surface`
 
@@ -78,7 +78,7 @@ A `ui_qml` module without `view_surface` is unaffected by every rule above.
   and carries it into the resolved metadata; documented in `docs/configuration.md`,
   `templates/ui-qml-backend/metadata.json` shows the key; 8 assertions in
   `tests/test-parse-metadata.nix`.
-- **Part B** implemented in `logos-basecamp` (M6c). `UIPluginManager` reads
+- **Part B** implemented in `logos-basecamp` at `37c9a57` (branch `rfc/view-surface`, M6c). `UIPluginManager` reads
   `view_surface` from the installed module's `metadata.json`; `PluginLoader` spawns with
   `gui = true` and the compositor socket, registers `expect()` right after `spawn()`
   (the token is known from spawn — RFC-2 deviation), and `stopViewModuleHost` does

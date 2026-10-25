@@ -14,7 +14,10 @@
 #include "view/core_client.h"
 #include "view/engine_config.h"
 
+#include <QHash>
+#include <QImage>
 #include <QJsonObject>
+#include <QList>
 #include <QObject>
 #include <QSize>
 #include <QString>
@@ -133,6 +136,10 @@ private:
     QSize viewportSize() const;
     void attachInput(QMapLibre::Map* map);
     void publishTracked();
+    void takeSnapshot(const QString& requestId, const QJsonObject& options);
+    void flushSnapshots();
+    void onFrameGrabbed(quint64 token, const QImage& image);
+    void snapshotFailed(const QString& requestId, const QString& reason);
     double metersPerPixelAtPaddedCentre(const QSize& size) const;
 
     CoreClient* m_core;
@@ -166,6 +173,15 @@ private:
     bool m_gestureInProgress = false;
     bool m_stateDirty = false;
     QTimer m_stateTimer;
+    struct PendingSnapshot {
+        QString requestId;
+        QJsonObject options;
+    };
+    QList<PendingSnapshot> m_pendingSnapshots;  // waiting for a rendered frame
+    QTimer* m_snapshotTimer = nullptr;
+    QHash<quint64, PendingSnapshot> m_grabs;    // handed to MapItem::grabNextFrame
+    quint64 m_grabToken = 0;
+    bool m_grabConnected = false;
     int m_instance = 0;
     static int s_instances;
 };

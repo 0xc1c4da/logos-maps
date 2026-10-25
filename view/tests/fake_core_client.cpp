@@ -217,7 +217,7 @@ void FakeCoreClient::getLayerOrder(const QString& viewId, CoreCallback cb)
 {
     QJsonArray layers;
     for (const QString& id : m_layerOrder) {
-        layers.append(QJsonObject{{QStringLiteral("layerId"), id}, {QStringLiteral("before"), QString()}, {QStringLiteral("anchor"), QStringLiteral("top")}});
+        layers.append(QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("before"), QString()}, {QStringLiteral("anchor"), QStringLiteral("top")}});
     }
     reply(QStringLiteral("getLayerOrder"), std::move(cb), true,
           QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("layers"), layers}, {QStringLiteral("missingAnchors"), QJsonArray{}},

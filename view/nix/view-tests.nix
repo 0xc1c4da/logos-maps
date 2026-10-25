@@ -28,7 +28,9 @@ let
   # GL without a desktop: Mesa's GLX/EGL vendor files and DRI drivers must be
   # reachable without /run/opengl-driver, which the sandbox does not have.
   # Qt from nixpkgs logs to journald unless QT_FORCE_STDERR_LOGGING is set.
-  glEnv = ''
+  # The driver half is shared with the headless dev launcher (below); the
+  # sandbox half pins HOME and the XDG dirs inside the build.
+  glDriverEnv = ''
     export QT_QPA_PLATFORM=offscreen
     export QT_QUICK_BACKEND=rhi
     export QT_FORCE_STDERR_LOGGING=1
@@ -39,6 +41,8 @@ let
     export LD_LIBRARY_PATH=${pkgs.mesa}/lib:${pkgs.libglvnd}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
     export LIBGL_ALWAYS_SOFTWARE=1
     export GALLIUM_DRIVER=llvmpipe
+  '';
+  glEnv = glDriverEnv + ''
     export HOME=$TMPDIR
     export XDG_CACHE_HOME=$TMPDIR/cache
     export XDG_RUNTIME_DIR=$TMPDIR/runtime
@@ -111,6 +115,15 @@ let
             --set-default QT_QPA_PLATFORM xcb \
             --prefix QML_IMPORT_PATH : ${qt.qtdeclarative}/${qt.qtbase.qtQmlPrefix} \
             --prefix QT_PLUGIN_PATH : ${qt.qtbase}/${qt.qtbase.qtPluginPrefix}:${qt.qtdeclarative}/${qt.qtbase.qtPluginPrefix}:${qt.qtwayland}/${qt.qtbase.qtPluginPrefix}
+          # Headless variant for scripts (tests/logosctl/e2e.sh): the same
+          # llvmpipe-under-Xvfb recipe as the suites, HOME left alone.
+          cat > $out/bin/maps_view_dev_headless <<EOF
+          #!${pkgs.runtimeShell}
+          ${glDriverEnv}
+          exec ${pkgs.xvfb-run}/bin/xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" \
+            $out/bin/maps_view_dev "\$@"
+          EOF
+          chmod +x $out/bin/maps_view_dev_headless
         '';
         nativeBuildInputs = [ pkgs.cmake pkgs.ninja pkgs.pkg-config pkgs.makeWrapper ];
         buildInputs = [ qt.qtbase qt.qtdeclarative qt.qtremoteobjects qt.qtwayland engine pkgs.sqlite pkgs.libglvnd ];

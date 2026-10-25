@@ -58,6 +58,18 @@ constexpr bool kP10 =
 #else
     false;
 #endif
+constexpr bool kP11 =
+#ifdef MAPS_ENGINE_HAS_P11_TEXTURE_NODE_FBO_RESTORE
+    true;
+#else
+    false;
+#endif
+constexpr bool kP12 =
+#ifdef MAPS_ENGINE_HAS_P12_SHARED_CONTEXT_PROGRAM_REBIND
+    true;
+#else
+    false;
+#endif
 }  // namespace
 
 bool hasQueryRenderedFeatures() { return kP1; }
@@ -68,6 +80,8 @@ bool hasLayerZoomVisibility() { return kP6; }
 bool hasExportedTextureNode() { return kP7; }
 bool hasCachePathPrefetch() { return kP9; }
 bool hasPlacementTransitionsToggle() { return kP10; }
+bool hasTextureNodeFramebufferRestore() { return kP11; }
+bool hasSharedContextProgramRebind() { return kP12; }
 
 QStringList enginePatchSet()
 {
@@ -80,6 +94,8 @@ QStringList enginePatchSet()
     if (kP2) out << QStringLiteral("P2");
     if (kP6) out << QStringLiteral("P6");
     if (kP10) out << QStringLiteral("P10");
+    if (kP11) out << QStringLiteral("P11");
+    if (kP12) out << QStringLiteral("P12");
     return out;
 }
 

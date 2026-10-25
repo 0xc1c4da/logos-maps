@@ -1,0 +1,68 @@
+From: Logos Maps <maps@logos.co>
+Subject: [PATCH] OpenGL backend: forget the cached program when the context is shared
+
+With Settings::SharedGLContext the core marks its cached GL state dirty
+at the start of every frame (gl::Context::setDirtyState()), so that state
+Qt changed between two map frames is re-applied. The program is the one
+exception: DrawableGL::draw() compares the drawable's shader against the
+cached *value* of the program state and only assigns -- and so only calls
+glUseProgram -- when the value differs. The dirty flag is never consulted.
+With the same drawables frame after frame the value never differs, and from
+the second frame on every drawable was rendered with whatever program Qt
+left current. Seen with a QQuickWindow texture node on Mesa/llvmpipe (Qt
+6.9): the first frame after a style or tile change is right, every frame
+after it is uniformly white (raster) or transparent (background), until
+the next change creates a new program and the value differs again.
+
+updateAssumedState() is the backend's hook for "the host used the context
+since we last did"; it now also forgets the program (current value 0), so
+the comparison in DrawableGL::draw() fails and the program is bound again.
+The core-side fix would be a plain assignment there (State<> already
+compares and honours the dirty flag); this keeps the change in the
+binding.
+
+---
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index d9a92a73..e5f732e4 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -150,6 +150,8 @@ target_link_libraries(
+     PRIVATE
+         $<BUILD_INTERFACE:mbgl-compiler-options>
+         $<BUILD_INTERFACE:mbgl-core>
++        # mbgl/gl/context.hpp (OpenGL renderer backend) needs the core's unique_resource header
++        $<BUILD_INTERFACE:mbgl-vendor-unique_resource>
+         $<BUILD_INTERFACE:MLNQtCompilerOptions>
+ )
+ if(NOT MLN_QT_WITH_INTERNAL_SQLITE)
+diff --git a/src/core/rendering/opengl_renderer_backend.cpp b/src/core/rendering/opengl_renderer_backend.cpp
+index cbf523ed..2422c00b 100644
+--- a/src/core/rendering/opengl_renderer_backend.cpp
++++ b/src/core/rendering/opengl_renderer_backend.cpp
+@@ -5,6 +5,7 @@
+ #include "opengl_renderer_backend_p.hpp"
+ 
+ #include <mbgl/gfx/backend_scope.hpp>
++#include <mbgl/gl/context.hpp>
+ #include <mbgl/gl/renderable_resource.hpp>
+ 
+ #include <QtGlobal>
+@@ -78,6 +79,18 @@ void OpenGLRendererBackend::deactivate() {
+ void OpenGLRendererBackend::updateAssumedState() {
+     assumeFramebufferBinding(ImplicitFramebufferBinding);
+     assumeViewport(1, 1, size); // Use 1,1 to avoid zero-size viewport issues
++
++    // The context is shared with Qt (QOpenGLWidget / the Quick scene graph),
++    // which binds its own programs between two map frames. For a shared
++    // context the core marks its cached state dirty at the start of every
++    // frame, but DrawableGL::draw() compares the drawable's shader against
++    // the cached *value* of the program state and only assigns (and thus
++    // only calls glUseProgram) when the value differs -- the dirty flag is
++    // bypassed. With the same drawables frame after frame the value never
++    // differs, so from the second frame on everything was drawn with
++    // whatever program Qt left current (first frame right, then white or
++    // transparent). Forget the program: there is none we can assume.
++    getContext<mbgl::gl::Context>().program.setCurrentValue(0);
+ }
+ 
+ void OpenGLRendererBackend::restoreFramebufferBinding() {

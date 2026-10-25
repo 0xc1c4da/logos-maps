@@ -1,6 +1,6 @@
 # RFC-2: Surface handshake between `ViewModuleHost` and `ui-host`
 
-**Repository:** `logos-view-module-runtime` · **Status:** draft · **Depends on:** RFC-1 · **Needed by:** RFC-3, RFC-4
+**Repository:** `logos-view-module-runtime` · **Status:** implemented (workspace, see §Status) · **Depends on:** RFC-1 · **Needed by:** RFC-3, RFC-4
 
 ## Problem
 
@@ -128,7 +128,7 @@ sequenceDiagram
 
 ## Status
 
-Implemented in `logos-view-module-runtime` (workspace branch, M6a, amended in M6c).
+Implemented in `logos-view-module-runtime` at `ee5eefb` (branch `rfc/view-surface`; `f8f9424` in M6a, amended by `ee5eefb` in M6c).
 Deviations from the draft:
 
 - The bridge accessor is a plain C++ method, not `Q_INVOKABLE` (§6).

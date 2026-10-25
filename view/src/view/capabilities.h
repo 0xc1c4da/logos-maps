@@ -31,6 +31,8 @@ bool hasLayerZoomVisibility();    // P6
 bool hasExportedTextureNode();    // P7
 bool hasCachePathPrefetch();      // P9
 bool hasPlacementTransitionsToggle();  // P10 (idle map renders zero frames)
+bool hasTextureNodeFramebufferRestore();  // P11 (texture node leaves the scene graph's FBO alone)
+bool hasSharedContextProgramRebind();  // P12 (shader re-bound every frame of the shared GL context)
 
 /// The nested capability object (keys are dotted in the spec table and nested
 /// here, matching core/src/engine/capability.h getPath/setPath).

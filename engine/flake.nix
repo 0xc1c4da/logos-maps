@@ -19,13 +19,15 @@
       });
 
       # docs/architecture.md §14.1. Order matters only for overlapping hunks;
-      # P1/P4/P5/P7 are mandatory (M14.1), the rest are capability-gated and
+      # P1/P4/P5/P7/P11/P12 are mandatory (M14.1), the rest are capability-gated and
       # may be dropped from this list without breaking maps_view.
       patchSet = [
         ./patches/p1-query-rendered-features.patch
         ./patches/p4-add-image-metadata.patch
         ./patches/p5-file-source-factory-hook.patch
         ./patches/p7-export-texture-node.patch
+        ./patches/p11-texture-node-fbo-restore.patch
+        ./patches/p12-shared-context-program-rebind.patch
         ./patches/p9-cache-path-prefetch.patch
         ./patches/p2-feature-state.patch
         ./patches/p6-layer-zoom-visibility.patch

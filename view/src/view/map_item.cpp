@@ -5,11 +5,15 @@
 #include <QMapLibreQuickPrivate/texture_node_opengl_p.hpp>
 
 #include <QDebug>
+#include <QMutexLocker>
 #include <QOpenGLContext>
+#include <QOpenGLFunctions>
 #include <QQmlEngine>
 #include <QQuickWindow>
 #include <QSGTexture>
 #include <QtGui/qopengl.h>
+
+#include <utility>
 
 namespace maps::view {
 
@@ -193,9 +197,71 @@ QSGNode* MapItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         m_viewportDirty = false;
     }
 
+    bool grabWanted = false;
+    {
+        const QMutexLocker lock(&m_grabMutex);
+        grabWanted = !m_pendingGrabs.isEmpty();
+    }
     node->render(window());
     if (QSGTexture* texture = node->texture()) m_lastTextureSize = texture->textureSize();
+    if (grabWanted) readBackFrame(node->texture(), ratio);
     return node;
+}
+
+void MapItem::grabNextFrame(quint64 token)
+{
+    {
+        const QMutexLocker lock(&m_grabMutex);
+        m_pendingGrabs.append(token);
+    }
+    if (!m_map || !window()) {
+        for (quint64 t : takePendingGrabs()) emit frameGrabbed(t, QImage());
+        return;
+    }
+    update();
+}
+
+QList<quint64> MapItem::takePendingGrabs()
+{
+    const QMutexLocker lock(&m_grabMutex);
+    return std::exchange(m_pendingGrabs, {});
+}
+
+// Render thread, right after the engine drew the frame into its texture:
+// attach that texture to a scratch FBO and read it back. The engine's
+// framebuffer is cleared opaque, so the image is flattened to RGB32.
+void MapItem::readBackFrame(QSGTexture* texture, qreal ratio)
+{
+    static const bool trace = qEnvironmentVariableIsSet("MAPS_VIEW_TRACE");
+    const QList<quint64> tokens = takePendingGrabs();
+    if (tokens.isEmpty()) return;
+    QImage image;
+    QOpenGLContext* context = QOpenGLContext::currentContext();
+    auto* native = texture ? texture->nativeInterface<QNativeInterface::QSGOpenGLTexture>() : nullptr;
+    if (context && native && native->nativeTexture() != 0 && !texture->textureSize().isEmpty()) {
+        QOpenGLFunctions* gl = context->functions();
+        const QSize size = texture->textureSize();
+        GLint previous = 0;
+        gl->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous);
+        GLuint fbo = 0;
+        gl->glGenFramebuffers(1, &fbo);
+        gl->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        gl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, native->nativeTexture(), 0);
+        if (gl->glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+            QImage raw(size, QImage::Format_RGBA8888_Premultiplied);
+            gl->glPixelStorei(GL_PACK_ALIGNMENT, 4);
+            gl->glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE, raw.bits());
+            if (trace) {
+                qDebug("maps_view: readBackFrame texture %u %dx%d centre #%08x", native->nativeTexture(), size.width(), size.height(),
+                       raw.pixel(size.width() / 2, size.height() / 2));
+            }
+            image = raw.flipped(Qt::Vertical).convertToFormat(QImage::Format_RGB32);
+            image.setDevicePixelRatio(ratio);
+        }
+        gl->glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous));
+        gl->glDeleteFramebuffers(1, &fbo);
+    }
+    for (quint64 t : tokens) emit frameGrabbed(t, image);
 }
 
 void registerMapQmlTypes()

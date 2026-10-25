@@ -1,6 +1,6 @@
 # RFC-1: `ui-host --gui` — a GUI-capable host process for `view_surface` modules
 
-**Repository:** `logos-view-module-runtime` · **Status:** draft · **Depends on:** nothing · **Needed by:** RFC-2, RFC-4
+**Repository:** `logos-view-module-runtime` · **Status:** implemented (workspace, see §Status) · **Depends on:** nothing · **Needed by:** RFC-2, RFC-4
 
 ## Problem
 
@@ -94,7 +94,7 @@ SIGTERM notifier already calls `app.quit()` on the main thread.
 
 ## Status
 
-Implemented in `logos-view-module-runtime` (workspace branch, M6a): `ui-host/main.cpp`
+Implemented in `logos-view-module-runtime` at `ee5eefb` (branch `rfc/view-surface`, M6a): `ui-host/main.cpp`
 pre-scans `--gui`/`--surface-socket` before constructing the application, links
 `Qt6::Gui`; `ViewSpawnOptions` in `include/ViewModuleHost.h`.
 

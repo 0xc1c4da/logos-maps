@@ -114,6 +114,7 @@ private:
     CoreClient* m_core;
     QString m_viewId;
     quint64 m_appliedRevision = 0;
+    quint64 m_ackedRevision = 0;
     std::optional<quint64> m_renderPending;  // revision awaiting its first full frame
     bool m_blocked = false;
     bool m_pendingPull = false;

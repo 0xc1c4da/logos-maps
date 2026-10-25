@@ -1,6 +1,6 @@
 # RFC-4: `SurfaceCompositor` — a nested Wayland compositor inside the host
 
-**Repository:** `logos-basecamp` · **Status:** draft · **Depends on:** RFC-1, RFC-2 · **Needed by:** RFC-3
+**Repository:** `logos-basecamp` · **Status:** implemented (workspace, see §Status) · **Depends on:** RFC-1, RFC-2 · **Needed by:** RFC-3
 
 ## Problem
 
@@ -102,7 +102,7 @@ test for RFC-1..5 (spec §16.6).
 
 ## Status
 
-Implemented in `logos-basecamp` (workspace branch, M6c): `app/surface/SurfaceCompositor.{h,cpp}`,
+Implemented in `logos-basecamp` at `37c9a57` (branch `rfc/view-surface`, M6c): `app/surface/SurfaceCompositor.{h,cpp}`,
 `LOGOS_HAVE_WAYLAND_COMPOSITOR` in `app/CMakeLists.txt` (Linux; `Qt6::WaylandCompositor`
 required there, compiled out elsewhere). Spike A settled §4 on **A1**: the output's
 window is the tab's `QQuickWidget::quickWindow()` and `Logos.Surface` is an ordinary item
@@ -138,5 +138,8 @@ in the sandboxed scene. Deviations and findings against Qt 6.9 `qtwayland`:
   check rather than a separate `view-surface-test` derivation with a fixture module: the
   same binary is the Wayland client (`--surface-client <token>`), so the check needs no
   built module and runs in ~1 s. It covers everything listed above plus client exit,
-  unknown pid, visibility gating and clean teardown. A real-app smoke test with
-  `maps_view` is spec §16.7 (M7).
+  unknown pid, visibility gating and clean teardown. The real-app smoke test is
+  `maps_view`'s `tests/basecamp-surface.mjs` (`nix run view#ui-tests`, M7): the
+  `Logos.Surface` in the maps tab binds, reports `wayland-shm`, and the host window is
+  captured with the map in it. Only `wl_shm` has been observed on this host (software
+  GL in the nix closure); the dmabuf path is spec O11.

@@ -98,7 +98,7 @@ void LogosctlCoreClient::call(const QString& method, QStringList args, Shape sha
             break;
         }
         case Shape::Bool:
-            reply = replyFromResult(result.toBool(), result, result.toBool() ? QString() : QStringLiteral("maps.rejected: the core returned false"));
+            reply = replyFromResult(result.toBool(), result, result.toBool() ? QString() : QStringLiteral("maps.rejected: %1 returned false").arg(method));
             break;
         case Shape::Text:
             reply = replyFromResult(true, result.isString() ? jsonFromText(result.toString()) : result, QString());

@@ -1,7 +1,7 @@
 // maps_view_dev: run the maps view as a desktop window against a maps_core
 // loaded in a logosctl session (docs/architecture.md section 16.7 tooling).
 //
-//   LOGOSCTL_CONFIG_DIR=... maps_view_dev [--logosctl PATH] [--session NAME]
+//   LOGOSCTL_CONFIG_DIR=... maps_view_dev [--logosctl PATH] [--view-session NAME]
 //                                         [--style FILE] [--qml-dir DIR]
 //                                         [--size WxH] [--no-core]
 //
@@ -36,7 +36,8 @@ int main(int argc, char** argv)
     QCommandLineParser parser;
     parser.addHelpOption();
     QCommandLineOption logosctlOpt(QStringLiteral("logosctl"), QStringLiteral("logosctl binary"), QStringLiteral("path"), QStringLiteral("logosctl"));
-    QCommandLineOption sessionOpt(QStringLiteral("session"), QStringLiteral("view session name"), QStringLiteral("name"), QStringLiteral("dev"));
+    // Not "--session": QGuiApplication consumes -session/--session for X11 session management.
+    QCommandLineOption sessionOpt(QStringLiteral("view-session"), QStringLiteral("view session name (the middle part of the viewId)"), QStringLiteral("name"), QStringLiteral("dev"));
     QCommandLineOption styleOpt(QStringLiteral("style"), QStringLiteral("style JSON file to load directly"), QStringLiteral("file"));
     QCommandLineOption qmlOpt(QStringLiteral("qml-dir"), QStringLiteral("directory holding MapWindow.qml"), QStringLiteral("dir"));
     QCommandLineOption sizeOpt(QStringLiteral("size"), QStringLiteral("window size WxH"), QStringLiteral("wxh"), QStringLiteral("1024x768"));

@@ -21,12 +21,15 @@
 
 #include <QMapLibre/Types>
 
+#include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QQuickWindow>
 #include <QRectF>
+#include <QUrl>
 #include <QtMath>
 
 #include <cmath>
@@ -373,8 +376,99 @@ void ViewController::onCoreEvent(const QString& topic, const QJsonObject& payloa
         if (tracked.isEmpty()) m_tracked.remove(session);
         else m_tracked.insert(session, tracked);
         publishTracked();
+    } else if (topic == QLatin1String("snapshotRequested")) {
+        if (mine) takeSnapshot(payload.value(QStringLiteral("requestId")).toString(), payload.value(QStringLiteral("options")).toObject());
     }
-    // snapshotRequested / catalogueChanged: later.
+    // catalogueChanged: the catalogue is read on demand; nothing to do here.
+}
+
+// M7.4 / section 16.7: `snapshot(viewId, options)` on maps_core becomes a
+// snapshotRequested event here and a snapshotReady event back, carrying a
+// reference to the PNG rather than its bytes (`bytesRef`, a file: URL under
+// the view's cache). Options: {"width","height"} (default: the viewport in
+// physical pixels), {"path"} (where to write; default:
+// <cache>/snapshots/<requestId>.png), {"settleMs": N} (cap on the wait for
+// a fully rendered frame; default 3000, 0 = next frame as is).
+//
+// The image is the engine's own frame -- MapItem reads its texture back on
+// the render thread -- not a grab of the host window, so it is the map and
+// nothing else, at the item's pixel ratio, and it does not depend on how
+// (or whether) the window is composited. The request waits for the next
+// fully rendered frame so a scene still loading shows the scene, not the
+// loading.
+void ViewController::takeSnapshot(const QString& requestId, const QJsonObject& options)
+{
+    if (!m_window || !m_mapItem || !m_mapItem->map()) {
+        snapshotFailed(requestId, QStringLiteral("maps.notReady"));
+        return;
+    }
+    const int settleMs = options.contains(QStringLiteral("settleMs")) ? options.value(QStringLiteral("settleMs")).toInt() : 3000;
+    if (settleMs > 0) {
+        PendingSnapshot pending{requestId, options};
+        pending.options.insert(QStringLiteral("settleMs"), 0);
+        m_pendingSnapshots.push_back(std::move(pending));
+        if (!m_snapshotTimer) {
+            m_snapshotTimer = new QTimer(this);
+            m_snapshotTimer->setSingleShot(true);
+            connect(m_snapshotTimer, &QTimer::timeout, this, &ViewController::flushSnapshots);
+        }
+        m_snapshotTimer->start(settleMs);
+        m_mapItem->update();  // ask for a frame; FrameRendered flushes earlier
+        return;
+    }
+    if (!m_grabConnected) {
+        m_grabConnected = true;
+        connect(m_mapItem, &MapItem::frameGrabbed, this, &ViewController::onFrameGrabbed);
+    }
+    const quint64 token = ++m_grabToken;
+    m_grabs.insert(token, PendingSnapshot{requestId, options});
+    m_mapItem->grabNextFrame(token);
+}
+
+void ViewController::onFrameGrabbed(quint64 token, const QImage& grabbed)
+{
+    const auto it = m_grabs.find(token);
+    if (it == m_grabs.end()) return;
+    const PendingSnapshot snapshot = *it;
+    m_grabs.erase(it);
+    if (grabbed.isNull()) {
+        snapshotFailed(snapshot.requestId, QStringLiteral("maps.renderFailed"));
+        return;
+    }
+    QImage image = grabbed;
+    const int w = snapshot.options.value(QStringLiteral("width")).toInt(0);
+    const int h = snapshot.options.value(QStringLiteral("height")).toInt(0);
+    if (w > 0 && h > 0 && QSize(w, h) != image.size())
+        image = image.scaled(w, h, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+    QString path = snapshot.options.value(QStringLiteral("path")).toString();
+    if (path.isEmpty()) {
+        const QString dir = QFileInfo(m_engine.cachePath).absolutePath() + QStringLiteral("/snapshots");
+        QDir().mkpath(dir);
+        path = dir + QStringLiteral("/") + snapshot.requestId + QStringLiteral(".png");
+    }
+    if (!image.save(path, "PNG")) {
+        snapshotFailed(snapshot.requestId, QStringLiteral("maps.writeFailed"));
+        return;
+    }
+    reportEvent(QStringLiteral("snapshotReady"), QJsonObject{{QStringLiteral("v"), 1},
+                                                              {QStringLiteral("requestId"), snapshot.requestId},
+                                                              {QStringLiteral("bytesRef"), QUrl::fromLocalFile(path).toString()},
+                                                              {QStringLiteral("width"), image.width()},
+                                                              {QStringLiteral("height"), image.height()}});
+}
+
+void ViewController::snapshotFailed(const QString& requestId, const QString& reason)
+{
+    reportEvent(QStringLiteral("snapshotReady"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("requestId"), requestId}, {QStringLiteral("error"), reason}});
+}
+
+void ViewController::flushSnapshots()
+{
+    if (m_snapshotTimer) m_snapshotTimer->stop();
+    const QList<PendingSnapshot> pending = std::move(m_pendingSnapshots);
+    m_pendingSnapshots.clear();
+    for (const PendingSnapshot& p : pending) takeSnapshot(p.requestId, p.options);
 }
 
 void ViewController::publishTracked()
@@ -454,6 +548,7 @@ void ViewController::onMapChange(int change)
         break;
     case PublicEvent::FrameRendered:
         if (m_applier) m_applier->onFrameFullyRendered();
+        if (!m_pendingSnapshots.isEmpty()) flushSnapshots();
         break;
     default:
         break;

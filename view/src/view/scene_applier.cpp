@@ -7,6 +7,7 @@
 #include <QMapLibre/qmaplibre_patchset.h>
 #endif
 
+#include <QDebug>
 #include <QImage>
 #include <QJsonDocument>
 #include <QVariantMap>
@@ -14,6 +15,12 @@
 namespace maps::view {
 
 namespace {
+
+bool trace()
+{
+    static const bool on = qEnvironmentVariableIsSet("MAPS_VIEW_TRACE");
+    return on;
+}
 
 QString compact(const QJsonValue& v)
 {
@@ -220,6 +227,7 @@ void SceneApplier::applyChanges(const QJsonObject& changes)
     }
     const quint64 to = static_cast<quint64>(changes.value(QStringLiteral("to")).toDouble());
     const QJsonArray ops = changes.value(QStringLiteral("ops")).toArray();
+    if (trace()) qDebug("maps_view: applier changes to=%llu ops=%d full=%d", static_cast<unsigned long long>(to), ops.size(), changes.value(QStringLiteral("full")).toBool());
     for (const QJsonValue& v : ops) applyOp(v.toObject());
     if (m_layersDirty) {
         reconcileLayers([this, to] { finishRevision(to); });
@@ -232,6 +240,7 @@ void SceneApplier::applyOp(const QJsonObject& op)
 {
     const QString kind = op.value(QStringLiteral("op")).toString();
     const QString id = op.value(QStringLiteral("id")).toString();
+    if (trace()) qDebug("maps_view: applier op %s %s", qPrintable(kind), qPrintable(id));
     if (kind == QLatin1String("removeLayer")) {
         if (m_map && m_map->layerExists(id)) m_map->removeLayer(id);
         m_layers.erase(id);
@@ -307,6 +316,7 @@ void SceneApplier::putSource(const QJsonObject& op)
     }
     m_sources[id] = std::move(def);
     if (m_map) m_map->addSource(id, sourceParams(id));
+    if (trace()) qDebug("maps_view: applier putSource %s type=%s exists=%d", qPrintable(id), qPrintable(m_sources[id].type), m_map ? m_map->sourceExists(id) : -1);
     emit sourceUpdated(id);
 }
 
@@ -405,14 +415,19 @@ void SceneApplier::insertLayers(const QJsonArray& resolved)
     m_order.clear();
     for (const QJsonValue& v : resolved) {
         const QJsonObject r = v.toObject();
-        const QString id = r.value(QStringLiteral("layerId")).toString();
+        const QString id = r.value(QStringLiteral("id")).toString();
         auto it = m_layers.find(id);
-        if (it == m_layers.end()) continue;  // the core knows a layer we have not received yet
+        if (it == m_layers.end()) {
+            // The core knows a layer we have not received yet.
+            if (trace()) qDebug("maps_view: applier order names unknown layer %s", qPrintable(id));
+            continue;
+        }
         const QString before = r.value(QStringLiteral("before")).toString();
         // Inserting each layer before the same anchor, bottom-to-top, yields
         // the resolved order; an empty `before` appends (top).
         m_map->addLayer(id, it->second.params.toVariantMap(),
                         (!before.isEmpty() && m_map->layerExists(before)) ? before : QString());
+        if (trace()) qDebug("maps_view: applier addLayer %s before=%s exists=%d", qPrintable(id), qPrintable(before), m_map->layerExists(id));
         m_order << id;
     }
 }
@@ -422,7 +437,7 @@ void SceneApplier::reconcileLayers(std::function<void()> then)
     if (!m_core || m_viewId.isEmpty() || !m_map) {
         // No order authority (tests without a core): session/batch order.
         QJsonArray resolved;
-        for (const auto& [id, l] : m_layers) resolved.append(QJsonObject{{QStringLiteral("layerId"), id}, {QStringLiteral("before"), QString()}});
+        for (const auto& [id, l] : m_layers) resolved.append(QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("before"), QString()}});
         insertLayers(resolved);
         m_layersDirty = false;
         emit layersReconciled(m_order, m_missingAnchors);
@@ -436,6 +451,7 @@ void SceneApplier::reconcileLayers(std::function<void()> then)
             return;
         }
         const QJsonObject order = reply.object();
+        if (trace()) qDebug("maps_view: applier layer order: %d layers, known %d", order.value(QStringLiteral("layers")).toArray().size(), static_cast<int>(m_layers.size()));
         insertLayers(order.value(QStringLiteral("layers")).toArray());
         m_missingAnchors.clear();
         for (const QJsonValue& a : order.value(QStringLiteral("missingAnchors")).toArray()) m_missingAnchors << a.toString();
@@ -451,7 +467,11 @@ void SceneApplier::finishRevision(quint64 revision)
     if (revision > m_appliedRevision) m_appliedRevision = revision;
     m_renderPending = m_appliedRevision;
     emit revisionApplied(m_appliedRevision);
-    if (m_core && !m_viewId.isEmpty()) {
+    // The core answers false to an ack that does not advance the view (a
+    // repeat, or revision 0 after the first empty pull), so only new ground is
+    // acknowledged.
+    if (m_core && !m_viewId.isEmpty() && m_appliedRevision > m_ackedRevision) {
+        m_ackedRevision = m_appliedRevision;
         m_core->ackRevision(m_viewId, m_appliedRevision, [this](const CoreReply& reply) {
             if (!reply.ok) emit sceneError(reply.code(), reply.error);
         });

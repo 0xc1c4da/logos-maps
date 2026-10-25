@@ -15,11 +15,16 @@
 
 #include <QMapLibre/Map>
 
+#include <QImage>
+#include <QList>
+#include <QMutex>
 #include <QQuickItem>
 #include <QSize>
 
 #include <atomic>
 #include <memory>
+
+class QSGTexture;
 
 namespace maps::view {
 
@@ -63,7 +68,14 @@ public:
     QSize lastTextureSize() const { return m_lastTextureSize; }
     int rendererCreations() const { return m_rendererCreations.load(); }
 
+    /// Snapshot rendering (M7.4): read the engine's texture back after the
+    /// next frame. The result arrives on the GUI thread as frameGrabbed(),
+    /// an opaque image at physical size with the item's pixel ratio set,
+    /// or a null image when the item could not render (no GL, no map).
+    void grabNextFrame(quint64 token);
+
 signals:
+    void frameGrabbed(quint64 token, const QImage& image);
     void mapCreated();
     void mapChanged(int change);          // raw QMapLibre::Map::MapChange
     void styleLoadedChanged();
@@ -83,6 +95,11 @@ private:
     void ensureMap();
     void onMapChanged(QMapLibre::Map::MapChange change);
     QSize viewportSize() const;
+    void readBackFrame(QSGTexture* texture, qreal ratio);  // render thread
+    QList<quint64> takePendingGrabs();
+
+    QMutex m_grabMutex;
+    QList<quint64> m_pendingGrabs;  // guarded by m_grabMutex
 
     EngineConfig m_config;
     std::shared_ptr<QMapLibre::Map> m_map;
