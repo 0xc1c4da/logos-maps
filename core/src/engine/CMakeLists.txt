@@ -25,6 +25,8 @@ set(MAPS_ENGINE_SOURCES
     stylepatch.cpp
     capability.cpp
     registry.cpp
+    projection.cpp
+    builtin_basemaps.cpp
 )
 
 add_library(maps_engine STATIC ${MAPS_ENGINE_SOURCES})
