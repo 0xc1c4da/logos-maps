@@ -1,0 +1,56 @@
+From: Logos Maps <maps@logos.co>
+Subject: [PATCH] Quick: install the QuickPrivate texture node headers
+
+Install export_quick_p.hpp, texture_node_base_p.hpp and the backend node
+header(s) under include/QMapLibreQuickPrivate and add that directory to
+the QuickPrivate target's install interface, so applications can build
+their own QQuickItem on TextureNodeOpenGL instead of copying it. Still
+private API: no compatibility promise.
+
+Mandatory for maps_view (M14.1): MapItem, §5.
+
+Upstream base: maplibre/maplibre-native-qt c3485f3 (docs/architecture.md section 14.1).
+---
+ src/quick/CMakeLists.txt | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/src/quick/CMakeLists.txt b/src/quick/CMakeLists.txt
+index 33bbb7bd..9ab02ce2 100644
+--- a/src/quick/CMakeLists.txt
++++ b/src/quick/CMakeLists.txt
+@@ -21,6 +21,17 @@ target_sources(
+         $<$<PLATFORM_ID:Windows>:${CMAKE_BINARY_DIR}/version_info.rc>
+ )
+ 
++# Headers installed for applications that build their own scene graph node on
++# top of the texture nodes (the QML plugin is one such consumer). They remain
++# private API: no source or binary compatibility is promised between versions.
++set(MLNQtQuickPrivate_Headers
++    export_quick_p.hpp
++    texture_node_base_p.hpp
++    $<$<BOOL:${MLN_WITH_OPENGL}>:${CMAKE_CURRENT_SOURCE_DIR}/texture_node_opengl_p.hpp>
++    $<$<BOOL:${MLN_WITH_VULKAN}>:${CMAKE_CURRENT_SOURCE_DIR}/texture_node_vulkan_p.hpp>
++    $<$<BOOL:${MLN_WITH_METAL}>:${CMAKE_CURRENT_SOURCE_DIR}/texture_node_metal_p.hpp>
++)
++
+ # Linux/Mac: Set framework, version and headers
+ set_target_properties(
+     MLNQtQuickPrivate
+@@ -30,6 +41,7 @@ set_target_properties(
+         EXPORT_NAME QuickPrivate
+         VERSION ${MLN_QT_VERSION}
+         SOVERSION ${PROJECT_VERSION_MAJOR}
++        PUBLIC_HEADER "${MLNQtQuickPrivate_Headers}"
+ )
+ 
+ # Qt MOC
+@@ -47,6 +59,9 @@ target_compile_definitions(
+ # Common include directories
+ target_include_directories(
+     MLNQtQuickPrivate
++    PUBLIC
++        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${MLN_QT_NAME}QuickPrivate>
++        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+     PRIVATE
+         ${CMAKE_CURRENT_SOURCE_DIR}
+         ${CMAKE_CURRENT_BINARY_DIR}/include

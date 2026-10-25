@@ -1,0 +1,347 @@
+From: Logos Maps <maps@logos.co>
+Subject: [PATCH] Map: queryRenderedFeatures and querySourceFeatures
+
+Expose the renderer's feature queries on QMapLibre::Map. Results are a
+GeoJSON FeatureCollection (UTF-8); every feature carries source, sourceLayer
+and state next to the GeoJSON members. The query runs on the caller's
+thread under MapPrivate's renderer mutex, which render() also holds, so a
+GUI-thread query never overlaps a frame on the render thread. Empty until
+a renderer exists.
+
+Mandatory for maps_view (M14.1): picking, §8.
+
+Upstream base: maplibre/maplibre-native-qt c3485f3 (docs/architecture.md section 14.1).
+---
+ src/core/map.cpp            | 177 ++++++++++++++++++++++++++++++++++++++++++++
+ src/core/map.hpp            |  17 +++++
+ src/core/map_p.hpp          |   9 +++
+ src/core/map_renderer.cpp   |  15 ++++
+ src/core/map_renderer_p.hpp |  13 ++++
+ 5 files changed, 231 insertions(+)
+
+diff --git a/src/core/map.cpp b/src/core/map.cpp
+index d9b84a65..b1faf20a 100644
+--- a/src/core/map.cpp
++++ b/src/core/map.cpp
+@@ -61,6 +61,11 @@
+ 
+ #include <mbgl/style/layers/custom_layer.hpp>
+ 
++#include <mapbox/geojson.hpp>
++#include <mapbox/geojson/rapidjson.hpp>
++#include <rapidjson/stringbuffer.h>
++#include <rapidjson/writer.h>
++
+ #include <QtCore/QDebug>
+ #include <QtCore/QThreadStorage>
+ #include <QtCore/QVariant>
+@@ -138,6 +143,109 @@ mbgl::Size sanitizeSize(const QSize &size) {
+     };
+ };
+ 
++// Feature query helpers.
++
++std::optional<mbgl::style::Filter> filterFromVariant(const QVariant &filter) {
++    if (!filter.isValid() || filter.isNull() || filter.toList().isEmpty()) {
++        return std::nullopt;
++    }
++
++    mbgl::style::conversion::Error error;
++    std::optional<mbgl::style::Filter> converted = mbgl::style::conversion::convert<mbgl::style::Filter>(filter, error);
++    if (!converted) {
++        qWarning() << "Error parsing filter:" << error.message.c_str();
++    }
++    return converted;
++}
++
++std::optional<std::vector<std::string>> stringsFromList(const QStringList &list) {
++    if (list.isEmpty()) {
++        return std::nullopt;
++    }
++
++    std::vector<std::string> strings;
++    strings.reserve(static_cast<size_t>(list.size()));
++    for (const QString &item : list) {
++        strings.push_back(item.toStdString());
++    }
++    return strings;
++}
++
++using JSONWriter = rapidjson::Writer<rapidjson::StringBuffer>;
++
++void writeValue(JSONWriter &writer, const mbgl::Value &value) {
++    value.match([&](const mbgl::NullValue) { writer.Null(); },
++                [&](const bool value_) { writer.Bool(value_); },
++                [&](const uint64_t value_) { writer.Uint64(value_); },
++                [&](const int64_t value_) { writer.Int64(value_); },
++                [&](const double value_) { writer.Double(value_); },
++                [&](const std::string &value_) { writer.String(value_.c_str(), static_cast<unsigned>(value_.size())); },
++                [&](const std::vector<mbgl::Value> &vector) {
++                    writer.StartArray();
++                    for (const auto &item : vector) {
++                        writeValue(writer, item);
++                    }
++                    writer.EndArray();
++                },
++                [&](const std::unordered_map<std::string, mbgl::Value> &map) {
++                    writer.StartObject();
++                    for (const auto &item : map) {
++                        writer.Key(item.first.c_str(), static_cast<unsigned>(item.first.size()));
++                        writeValue(writer, item.second);
++                    }
++                    writer.EndObject();
++                });
++}
++
++void writeFeature(JSONWriter &writer, const mbgl::Feature &feature) {
++    writer.StartObject();
++    writer.Key("type");
++    writer.String("Feature");
++
++    if (!feature.id.is<mbgl::NullValue>()) {
++        writer.Key("id");
++        feature.id.match([&](const mbgl::NullValue) { writer.Null(); },
++                         [&](const uint64_t id) { writer.Uint64(id); },
++                         [&](const int64_t id) { writer.Int64(id); },
++                         [&](const double id) { writer.Double(id); },
++                         [&](const std::string &id) { writer.String(id.c_str(), static_cast<unsigned>(id.size())); });
++    }
++
++    writer.Key("geometry");
++    mapbox::geojson::rapidjson_allocator allocator;
++    mapbox::geojson::convert<mapbox::geojson::geometry>(feature.geometry, allocator).Accept(writer);
++
++    writer.Key("properties");
++    writeValue(writer, mbgl::Value(feature.properties));
++
++    writer.Key("source");
++    writer.String(feature.source.c_str(), static_cast<unsigned>(feature.source.size()));
++    writer.Key("sourceLayer");
++    writer.String(feature.sourceLayer.c_str(), static_cast<unsigned>(feature.sourceLayer.size()));
++    writer.Key("state");
++    writeValue(writer, mbgl::Value(feature.state));
++
++    writer.EndObject();
++}
++
++QByteArray featureCollectionJson(const std::vector<mbgl::Feature> &features) {
++    rapidjson::StringBuffer buffer;
++    JSONWriter writer(buffer);
++
++    writer.StartObject();
++    writer.Key("type");
++    writer.String("FeatureCollection");
++    writer.Key("features");
++    writer.StartArray();
++    for (const auto &feature : features) {
++        writeFeature(writer, feature);
++    }
++    writer.EndArray();
++    writer.EndObject();
++
++    return QByteArray(buffer.GetString(), static_cast<qsizetype>(buffer.GetSize()));
++}
++
+ std::unique_ptr<mbgl::style::Image> toStyleImage(const QString &id, const QImage &sprite) {
+     const QImage swapped = sprite.rgbSwapped().convertToFormat(QImage::Format_ARGB32_Premultiplied);
+ 
+@@ -1566,6 +1674,57 @@ QVariant Map::getFilter(const QString &layerId) const {
+     return variantFromValue(serialized);
+ }
+ 
++/*!
++    \brief Query the features rendered inside a screen box.
++    \param box The box in logical pixels, in the same space as pixelForCoordinate().
++    \param layerIds Restrict the query to these style layers; empty means all layers.
++    \param filter An optional filter expression in the
++    <a href="https://maplibre.org/maplibre-style-spec/expressions/">MapLibre Style Spec</a> format.
++    \return A GeoJSON \c FeatureCollection encoded as UTF-8.
++
++    Each feature additionally carries the \c source and \c sourceLayer it was
++    rendered from and its current feature \c state. Answers from the last
++    rendered frame; returns an empty collection until a renderer exists.
++
++    Safe to call from the GUI thread while rendering happens on another thread.
++*/
++QByteArray Map::queryRenderedFeatures(const QRectF &box, const QStringList &layerIds, const QVariant &filter) const {
++    const mbgl::ScreenBox screenBox{{box.left(), box.top()}, {box.right(), box.bottom()}};
++    return featureCollectionJson(d_ptr->queryRenderedFeatures(
++        screenBox, mbgl::RenderedQueryOptions(stringsFromList(layerIds), filterFromVariant(filter))));
++}
++
++/*!
++    \brief Query the features rendered at a screen point.
++    \param point The point in logical pixels.
++    \param layerIds Restrict the query to these style layers; empty means all layers.
++    \param filter An optional filter expression.
++    \return A GeoJSON \c FeatureCollection encoded as UTF-8.
++
++    \sa queryRenderedFeatures(const QRectF &, const QStringList &, const QVariant &) const
++*/
++QByteArray Map::queryRenderedFeatures(const QPointF &point, const QStringList &layerIds, const QVariant &filter) const {
++    const mbgl::ScreenCoordinate screenPoint{point.x(), point.y()};
++    return featureCollectionJson(d_ptr->queryRenderedFeatures(
++        screenPoint, mbgl::RenderedQueryOptions(stringsFromList(layerIds), filterFromVariant(filter))));
++}
++
++/*!
++    \brief Query the features of a source that are currently loaded.
++    \param sourceId The source identifier.
++    \param sourceLayers For vector sources, the source layers to query; ignored for GeoJSON sources.
++    \param filter An optional filter expression.
++    \return A GeoJSON \c FeatureCollection encoded as UTF-8.
++
++    Only features in tiles that are loaded for the current viewport are returned.
++*/
++QByteArray Map::querySourceFeatures(const QString &sourceId,
++                                    const QStringList &sourceLayers,
++                                    const QVariant &filter) const {
++    return featureCollectionJson(d_ptr->querySourceFeatures(
++        sourceId.toStdString(), mbgl::SourceQueryOptions(stringsFromList(sourceLayers), filterFromVariant(filter))));
++}
++
+ /*!
+     \brief Create the renderer.
+     \param nativeTargetPtr The pointer to the native layer/window/surface.
+@@ -2011,6 +2170,24 @@ bool MapPrivate::setProperty(const PropertySetter &setter,
+     return true;
+ }
+ 
++std::vector<mbgl::Feature> MapPrivate::queryRenderedFeatures(const mbgl::ScreenBox &box,
++                                                             const mbgl::RenderedQueryOptions &options) const {
++    const std::scoped_lock lock(m_mapRendererMutex);
++    return m_mapRenderer ? m_mapRenderer->queryRenderedFeatures(box, options) : std::vector<mbgl::Feature>{};
++}
++
++std::vector<mbgl::Feature> MapPrivate::queryRenderedFeatures(const mbgl::ScreenCoordinate &point,
++                                                             const mbgl::RenderedQueryOptions &options) const {
++    const std::scoped_lock lock(m_mapRendererMutex);
++    return m_mapRenderer ? m_mapRenderer->queryRenderedFeatures(point, options) : std::vector<mbgl::Feature>{};
++}
++
++std::vector<mbgl::Feature> MapPrivate::querySourceFeatures(const std::string &sourceId,
++                                                           const mbgl::SourceQueryOptions &options) const {
++    const std::scoped_lock lock(m_mapRendererMutex);
++    return m_mapRenderer ? m_mapRenderer->querySourceFeatures(sourceId, options) : std::vector<mbgl::Feature>{};
++}
++
+ void *MapPrivate::currentDrawableTexture() const {
+     const std::scoped_lock lock(m_mapRendererMutex);
+     return m_mapRenderer ? m_mapRenderer->currentDrawableTexture() : nullptr;
+diff --git a/src/core/map.hpp b/src/core/map.hpp
+index ea533ed0..6072d46d 100644
+--- a/src/core/map.hpp
++++ b/src/core/map.hpp
+@@ -10,9 +10,11 @@
+ #include <QMapLibre/Settings>
+ #include <QMapLibre/Types>
+ 
++#include <QtCore/QByteArray>
+ #include <QtCore/QMargins>
+ #include <QtCore/QObject>
+ #include <QtCore/QPointF>
++#include <QtCore/QRectF>
+ #include <QtCore/QSize>
+ #include <QtCore/QString>
+ #include <QtCore/QStringList>
+@@ -177,6 +179,21 @@ public:
+ 
+     void setFilter(const QString &layerId, const QVariant &filter);
+     [[nodiscard]] QVariant getFilter(const QString &layerId) const;
++
++    // Feature queries. Results are a GeoJSON FeatureCollection (UTF-8); each
++    // feature additionally carries "source", "sourceLayer" and "state".
++    // Rendered queries answer from the last rendered frame and return an
++    // empty collection until a renderer exists.
++    [[nodiscard]] QByteArray queryRenderedFeatures(const QRectF &box,
++                                                   const QStringList &layerIds = QStringList(),
++                                                   const QVariant &filter = QVariant()) const;
++    [[nodiscard]] QByteArray queryRenderedFeatures(const QPointF &point,
++                                                   const QStringList &layerIds = QStringList(),
++                                                   const QVariant &filter = QVariant()) const;
++    [[nodiscard]] QByteArray querySourceFeatures(const QString &sourceId,
++                                                 const QStringList &sourceLayers = QStringList(),
++                                                 const QVariant &filter = QVariant()) const;
++
+     // When rendering on a different thread,
+     // should be called on the render thread.
+     void createRenderer(void *nativeTargetPtr);
+diff --git a/src/core/map_p.hpp b/src/core/map_p.hpp
+index 2178c464..f84e3106 100644
+--- a/src/core/map_p.hpp
++++ b/src/core/map_p.hpp
+@@ -57,6 +57,15 @@ public:
+                                    const QString &name,
+                                    const QVariant &value) const;
+ 
++    // Feature queries, forwarded to the renderer under m_mapRendererMutex.
++    // Empty until a renderer exists.
++    [[nodiscard]] std::vector<mbgl::Feature> queryRenderedFeatures(const mbgl::ScreenBox &box,
++                                                                   const mbgl::RenderedQueryOptions &options) const;
++    [[nodiscard]] std::vector<mbgl::Feature> queryRenderedFeatures(const mbgl::ScreenCoordinate &point,
++                                                                   const mbgl::RenderedQueryOptions &options) const;
++    [[nodiscard]] std::vector<mbgl::Feature> querySourceFeatures(const std::string &sourceId,
++                                                                 const mbgl::SourceQueryOptions &options) const;
++
+     mbgl::EdgeInsets margins;
+     std::unique_ptr<mbgl::Map> mapObj;
+ 
+diff --git a/src/core/map_renderer.cpp b/src/core/map_renderer.cpp
+index a1b3a4ad..c9bdef39 100644
+--- a/src/core/map_renderer.cpp
++++ b/src/core/map_renderer.cpp
+@@ -171,6 +171,21 @@ void MapRenderer::setObserver(mbgl::RendererObserver *observer) {
+     m_renderer->setObserver(observer);
+ }
+ 
++std::vector<mbgl::Feature> MapRenderer::queryRenderedFeatures(const mbgl::ScreenBox &box,
++                                                              const mbgl::RenderedQueryOptions &options) const {
++    return m_renderer->queryRenderedFeatures(box, options);
++}
++
++std::vector<mbgl::Feature> MapRenderer::queryRenderedFeatures(const mbgl::ScreenCoordinate &point,
++                                                              const mbgl::RenderedQueryOptions &options) const {
++    return m_renderer->queryRenderedFeatures(point, options);
++}
++
++std::vector<mbgl::Feature> MapRenderer::querySourceFeatures(const std::string &sourceId,
++                                                            const mbgl::SourceQueryOptions &options) const {
++    return m_renderer->querySourceFeatures(sourceId, options);
++}
++
+ /*! \endcond */
+ 
+ } // namespace QMapLibre
+diff --git a/src/core/map_renderer_p.hpp b/src/core/map_renderer_p.hpp
+index a215a722..294eb904 100644
+--- a/src/core/map_renderer_p.hpp
++++ b/src/core/map_renderer_p.hpp
+@@ -9,8 +9,11 @@
+ 
+ #include "rendering/renderer_backend_p.hpp" // provides RendererBackend alias
+ 
++#include <mbgl/renderer/query.hpp>
+ #include <mbgl/renderer/renderer.hpp>
+ #include <mbgl/renderer/renderer_observer.hpp>
++#include <mbgl/util/feature.hpp>
++#include <mbgl/util/geo.hpp>
+ #include <mbgl/util/util.hpp>
+ 
+ #include <QtCore/QObject>
+@@ -55,6 +58,16 @@ public:
+     void updateRenderer(const mbgl::Size &size, qreal pixelRatio, quint32 fbo = 0);
+     void setObserver(mbgl::RendererObserver *observer);
+ 
++    // Feature queries, answered from the last rendered frame. The owner
++    // (MapPrivate) serialises these against render() with its renderer mutex,
++    // so they may be called from any thread.
++    [[nodiscard]] std::vector<mbgl::Feature> queryRenderedFeatures(const mbgl::ScreenBox &box,
++                                                                   const mbgl::RenderedQueryOptions &options) const;
++    [[nodiscard]] std::vector<mbgl::Feature> queryRenderedFeatures(const mbgl::ScreenCoordinate &point,
++                                                                   const mbgl::RenderedQueryOptions &options) const;
++    [[nodiscard]] std::vector<mbgl::Feature> querySourceFeatures(const std::string &sourceId,
++                                                                 const mbgl::SourceQueryOptions &options) const;
++
+     // Thread-safe, called by the Frontend
+     void updateParameters(std::shared_ptr<mbgl::UpdateParameters> parameters);
+ 

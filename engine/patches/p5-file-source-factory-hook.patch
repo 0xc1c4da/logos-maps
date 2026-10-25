@@ -1,0 +1,117 @@
+From: Logos Maps <maps@logos.co>
+Subject: [PATCH] Settings: file source factory hook; install mapbox header deps
+
+Settings::setFileSourceFactoryHook(std::function<void(mbgl::FileSourceManager&)>)
+is invoked right before a Map constructs its file sources, so applications
+can register a custom ResourceLoader (or Network/Asset) factory. Also
+installs the header-only mapbox libraries (variant, geometry, feature,
+geojson, compatibility) the installed mbgl headers include, so the hook's
+types are usable from an installed tree.
+
+Mandatory for maps_view (M14.1): providers, §10.
+
+Upstream base: maplibre/maplibre-native-qt c3485f3 (docs/architecture.md section 14.1).
+---
+ src/core/map.cpp        |  8 ++++++++
+ src/core/settings.cpp   | 25 +++++++++++++++++++++++++
+ src/core/settings.hpp   |  5 +++++
+ src/core/settings_p.hpp |  1 +
+ 4 files changed, 39 insertions(+)
+
+diff --git a/src/core/map.cpp b/src/core/map.cpp
+index 2570147f..d14bd08d 100644
+--- a/src/core/map.cpp
++++ b/src/core/map.cpp
+@@ -2025,6 +2025,14 @@ MapPrivate::MapPrivate(Map *map, const Settings &settings, const QSize &size, qr
+     auto resourceOptions = resourceOptionsFromSettings(settings);
+     auto clientOptions = clientOptionsFromSettings(settings);
+ 
++    // Let the application register custom file source factories before the
++    // map asks the manager for its resource loader.
++    if (settings.fileSourceFactoryHook()) {
++        if (mbgl::FileSourceManager *manager = mbgl::FileSourceManager::get()) {
++            settings.fileSourceFactoryHook()(*manager);
++        }
++    }
++
+     // Setup the Map object.
+     mapObj = std::make_unique<mbgl::Map>(*this,
+                                          *m_mapObserver,
+diff --git a/src/core/settings.cpp b/src/core/settings.cpp
+index 74f29b20..2fb629a9 100644
+--- a/src/core/settings.cpp
++++ b/src/core/settings.cpp
+@@ -532,6 +532,31 @@ void Settings::setResourceTransform(const ResourceTransformFunction &transform)
+     d_ptr->m_resourceTransform = transform;
+ }
+ 
++/*!
++    \brief Get the file source factory hook.
++    \return The file source factory hook.
++*/
++Settings::FileSourceFactoryHook Settings::fileSourceFactoryHook() const {
++    return d_ptr->m_fileSourceFactoryHook;
++}
++
++/*!
++    \brief Set the file source factory hook.
++    \param hook The hook.
++
++    When given, the \a hook is invoked with the process-wide
++    \c mbgl::FileSourceManager right before a Map constructs its file sources,
++    so that custom factories can be registered (for example a resource loader
++    that serves \c custom:// URLs from memory or dispatches to an application
++    provider before falling back to the default loader).
++
++    \warning Mainly for advanced use. The manager is a singleton: a factory
++    registered here stays in effect for every Map created afterwards.
++*/
++void Settings::setFileSourceFactoryHook(const FileSourceFactoryHook &hook) {
++    d_ptr->m_fileSourceFactoryHook = hook;
++}
++
+ /*!
+     \brief Reset all settings based on the given template.
+     \param providerTemplate The provider template.
+diff --git a/src/core/settings.hpp b/src/core/settings.hpp
+index d6f88b87..de10d8a7 100644
+--- a/src/core/settings.hpp
++++ b/src/core/settings.hpp
+@@ -17,6 +17,7 @@
+ 
+ // TODO: this will be wrapped at some point
+ namespace mbgl {
++class FileSourceManager;
+ class TileServerOptions;
+ } // namespace mbgl
+ 
+@@ -55,6 +56,7 @@ public:
+     };
+ 
+     using ResourceTransformFunction = std::function<std::string(const std::string &)>;
++    using FileSourceFactoryHook = std::function<void(mbgl::FileSourceManager &)>;
+ 
+     explicit Settings(ProviderTemplate provider = NoProvider);
+     ~Settings();
+@@ -102,6 +104,9 @@ public:
+     [[nodiscard]] ResourceTransformFunction resourceTransform() const;
+     void setResourceTransform(const ResourceTransformFunction &transform);
+ 
++    [[nodiscard]] FileSourceFactoryHook fileSourceFactoryHook() const;
++    void setFileSourceFactoryHook(const FileSourceFactoryHook &hook);
++
+     void setProviderTemplate(ProviderTemplate providerTemplate);
+     void setStyles(const Styles &styles);
+ 
+diff --git a/src/core/settings_p.hpp b/src/core/settings_p.hpp
+index 257bdfd5..fa2ef72d 100644
+--- a/src/core/settings_p.hpp
++++ b/src/core/settings_p.hpp
+@@ -49,6 +49,7 @@ public:
+     Styles m_styles;
+ 
+     std::function<std::string(const std::string &)> m_resourceTransform;
++    Settings::FileSourceFactoryHook m_fileSourceFactoryHook;
+ 
+     bool m_customTileServerOptions{};
+     mbgl::TileServerOptions m_tileServerOptions{};

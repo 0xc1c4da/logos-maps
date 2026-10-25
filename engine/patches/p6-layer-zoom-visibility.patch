@@ -1,0 +1,160 @@
+From: Logos Maps <maps@logos.co>
+Subject: [PATCH] Map: setLayerZoomRange, setLayerVisibility, getLayerJson, getSourceJson
+
+Direct setters for a layer's zoom range and visibility, and JSON
+introspection of a layer (full style-spec serialization including runtime
+changes) and of a source (id, type, attribution, volatile).
+
+Optional (capability-gated): §6 putLayer min/maxzoom, diagnostics.
+Requires P1 (shares its JSON writer).
+
+Upstream base: maplibre/maplibre-native-qt c3485f3 (docs/architecture.md section 14.1).
+---
+ src/core/map.cpp | 110 +++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/core/map.hpp |   5 +++
+ 2 files changed, 115 insertions(+)
+
+diff --git a/src/core/map.cpp b/src/core/map.cpp
+index 7d2e5c93..2aef9273 100644
+--- a/src/core/map.cpp
++++ b/src/core/map.cpp
+@@ -253,6 +253,28 @@ void writeFeature(JSONWriter &writer, const mbgl::Feature &feature) {
+     writer.EndObject();
+ }
+ 
++const char *sourceTypeName(mbgl::style::SourceType type) {
++    switch (type) {
++        case mbgl::style::SourceType::Vector:
++            return "vector";
++        case mbgl::style::SourceType::Raster:
++            return "raster";
++        case mbgl::style::SourceType::RasterDEM:
++            return "raster-dem";
++        case mbgl::style::SourceType::GeoJSON:
++            return "geojson";
++        case mbgl::style::SourceType::Video:
++            return "video";
++        case mbgl::style::SourceType::Annotations:
++            return "annotations";
++        case mbgl::style::SourceType::Image:
++            return "image";
++        case mbgl::style::SourceType::CustomVector:
++            return "customvector";
++    }
++    return "unknown";
++}
++
+ QByteArray featureCollectionJson(const std::vector<mbgl::Feature> &features) {
+     rapidjson::StringBuffer buffer;
+     JSONWriter writer(buffer);
+@@ -1794,6 +1816,94 @@ QVariant Map::getFilter(const QString &layerId) const {
+     return variantFromValue(serialized);
+ }
+ 
++/*!
++    \brief Set the zoom range of a layer.
++    \param layerId The layer identifier.
++    \param minZoom The minimum zoom (inclusive) at which the layer is drawn.
++    \param maxZoom The maximum zoom (exclusive) at which the layer is drawn.
++    \return \c false when the layer does not exist.
++*/
++bool Map::setLayerZoomRange(const QString &layerId, double minZoom, double maxZoom) {
++    mbgl::style::Layer *layer = d_ptr->mapObj->getStyle().getLayer(layerId.toStdString());
++    if (layer == nullptr) {
++        qWarning() << "Layer not found:" << layerId;
++        return false;
++    }
++
++    layer->setMinZoom(static_cast<float>(minZoom));
++    layer->setMaxZoom(static_cast<float>(maxZoom));
++    return true;
++}
++
++/*!
++    \brief Show or hide a layer.
++    \param layerId The layer identifier.
++    \param visible Whether the layer is drawn.
++    \return \c false when the layer does not exist.
++
++    Equivalent to setting the \c visibility layout property, without going
++    through the property conversion.
++*/
++bool Map::setLayerVisibility(const QString &layerId, bool visible) {
++    mbgl::style::Layer *layer = d_ptr->mapObj->getStyle().getLayer(layerId.toStdString());
++    if (layer == nullptr) {
++        qWarning() << "Layer not found:" << layerId;
++        return false;
++    }
++
++    layer->setVisibility(visible ? mbgl::style::VisibilityType::Visible : mbgl::style::VisibilityType::None);
++    return true;
++}
++
++/*!
++    \brief Serialize a layer.
++    \param layerId The layer identifier.
++    \return The layer as style-spec JSON (UTF-8), or an empty array when the layer does not exist.
++
++    The result is the layer as the style currently holds it, including every
++    runtime change made through the property setters.
++*/
++QByteArray Map::getLayerJson(const QString &layerId) const {
++    const mbgl::style::Layer *layer = d_ptr->mapObj->getStyle().getLayer(layerId.toStdString());
++    if (layer == nullptr) {
++        return {};
++    }
++
++    rapidjson::StringBuffer buffer;
++    JSONWriter writer(buffer);
++    writeValue(writer, layer->serialize());
++    return QByteArray(buffer.GetString(), static_cast<qsizetype>(buffer.GetSize()));
++}
++
++/*!
++    \brief Describe a source.
++    \param sourceId The source identifier.
++    \return A JSON object (UTF-8) with the source's \c id, \c type, \c attribution
++    and \c volatile flag, or an empty array when the source does not exist.
++
++    Sources do not serialize their data; this returns what the style knows
++    about the source without it.
++*/
++QByteArray Map::getSourceJson(const QString &sourceId) const {
++    const mbgl::style::Source *source = d_ptr->mapObj->getStyle().getSource(sourceId.toStdString());
++    if (source == nullptr) {
++        return {};
++    }
++
++    std::unordered_map<std::string, mbgl::Value> object;
++    object.emplace("id", source->getID());
++    object.emplace("type", std::string(sourceTypeName(source->getType())));
++    if (const auto attribution = source->getAttribution()) {
++        object.emplace("attribution", *attribution);
++    }
++    object.emplace("volatile", source->isVolatile());
++
++    rapidjson::StringBuffer buffer;
++    JSONWriter writer(buffer);
++    writeValue(writer, mbgl::Value(std::move(object)));
++    return QByteArray(buffer.GetString(), static_cast<qsizetype>(buffer.GetSize()));
++}
++
+ /*!
+     \brief Query the features rendered inside a screen box.
+     \param box The box in logical pixels, in the same space as pixelForCoordinate().
+diff --git a/src/core/map.hpp b/src/core/map.hpp
+index 5d5d8593..e860e5a1 100644
+--- a/src/core/map.hpp
++++ b/src/core/map.hpp
+@@ -206,6 +206,11 @@ public:
+     void setFilter(const QString &layerId, const QVariant &filter);
+     [[nodiscard]] QVariant getFilter(const QString &layerId) const;
+ 
++    bool setLayerZoomRange(const QString &layerId, double minZoom, double maxZoom);
++    bool setLayerVisibility(const QString &layerId, bool visible);
++    [[nodiscard]] QByteArray getLayerJson(const QString &layerId) const;
++    [[nodiscard]] QByteArray getSourceJson(const QString &sourceId) const;
++
+     // Feature queries. Results are a GeoJSON FeatureCollection (UTF-8); each
+     // feature additionally carries "source", "sourceLayer" and "state".
+     // Rendered queries answer from the last rendered frame and return an

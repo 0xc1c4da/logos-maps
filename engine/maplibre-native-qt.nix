@@ -96,6 +96,10 @@ stdenv.mkDerivation {
     # are installed by patch P7 itself; nothing to do here when it is absent.
   '';
 
+  # Lets consumers (maps_view's flake, tests) see at eval time which patches
+  # this build carries; the same list drives the header above.
+  passthru = { inherit patchNames rev; };
+
   meta = with lib; {
     description = "MapLibre Native Qt binding with the Logos Maps patch set";
     homepage = "https://github.com/maplibre/maplibre-native-qt";

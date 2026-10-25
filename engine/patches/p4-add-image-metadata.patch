@@ -1,0 +1,148 @@
+From: Logos Maps <maps@logos.co>
+Subject: [PATCH] Map: addImage overload with sprite metadata
+
+Add Map::addImage(id, image, pixelRatio, sdf, stretchX, stretchY, content)
+so that runtime images can carry what a sprite sheet entry carries:
+device pixel ratio, SDF flag (icon-color), stretch zones and the content
+box for icon-text-fit. The existing two-argument overload is unchanged.
+
+Mandatory for maps_view (M14.1): putImage, §6.
+
+Upstream base: maplibre/maplibre-native-qt c3485f3 (docs/architecture.md section 14.1).
+---
+ src/core/CMakeLists.txt | 13 +++++++++++
+ src/core/map.cpp        | 62 +++++++++++++++++++++++++++++++++++++++++++++++--
+ src/core/map.hpp        |  7 ++++++
+ 3 files changed, 80 insertions(+), 2 deletions(-)
+
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index 052a47e4..d9a92a73 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -219,6 +219,19 @@ install(
+     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+ )
+ 
++# The mbgl headers above are not self-contained: they include the header-only
++# mapbox libraries (variant, geometry, feature, geojson, compatibility). Install
++# those too so that applications can use the mbgl types the Settings hooks hand
++# out (FileSourceManager, FileSource, Resource, Response).
++install(
++    DIRECTORY
++        ${MLN_CORE_PATH}/vendor/maplibre-native-base/include/mapbox
++        ${MLN_CORE_PATH}/vendor/maplibre-native-base/deps/variant/include/mapbox
++        ${MLN_CORE_PATH}/vendor/maplibre-native-base/deps/geometry.hpp/include/mapbox
++        ${MLN_CORE_PATH}/vendor/maplibre-native-base/deps/geojson.hpp/include/mapbox
++    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
++)
++
+ install(
+     TARGETS MLNQtCore
+     EXPORT ${MLN_QT_NAME}CoreTargets
+diff --git a/src/core/map.cpp b/src/core/map.cpp
+index b1faf20a..2570147f 100644
+--- a/src/core/map.cpp
++++ b/src/core/map.cpp
+@@ -246,17 +246,44 @@ QByteArray featureCollectionJson(const std::vector<mbgl::Feature> &features) {
+     return QByteArray(buffer.GetString(), static_cast<qsizetype>(buffer.GetSize()));
+ }
+ 
+-std::unique_ptr<mbgl::style::Image> toStyleImage(const QString &id, const QImage &sprite) {
++mbgl::style::ImageStretches toImageStretches(const QList<QPair<float, float>> &stretches) {
++    mbgl::style::ImageStretches result;
++    result.reserve(static_cast<size_t>(stretches.size()));
++    for (const auto &stretch : stretches) {
++        result.emplace_back(stretch.first, stretch.second);
++    }
++    return result;
++}
++
++std::unique_ptr<mbgl::style::Image> toStyleImage(const QString &id,
++                                                 const QImage &sprite,
++                                                 qreal pixelRatio = 1.0,
++                                                 bool sdf = false,
++                                                 const QList<QPair<float, float>> &stretchX = {},
++                                                 const QList<QPair<float, float>> &stretchY = {},
++                                                 const QRectF &content = QRectF()) {
+     const QImage swapped = sprite.rgbSwapped().convertToFormat(QImage::Format_ARGB32_Premultiplied);
+ 
+     auto img = std::make_unique<uint8_t[]>(swapped.sizeInBytes());
+     memcpy(img.get(), swapped.constBits(), swapped.sizeInBytes());
+ 
++    std::optional<mbgl::style::ImageContent> imageContent;
++    if (!content.isNull()) {
++        imageContent = mbgl::style::ImageContent{static_cast<float>(content.left()),
++                                                 static_cast<float>(content.top()),
++                                                 static_cast<float>(content.right()),
++                                                 static_cast<float>(content.bottom())};
++    }
++
+     return std::make_unique<mbgl::style::Image>(
+         id.toStdString(),
+         mbgl::PremultipliedImage({static_cast<uint32_t>(swapped.width()), static_cast<uint32_t>(swapped.height())},
+                                  std::move(img)),
+-        1.0);
++        static_cast<float>(pixelRatio),
++        sdf,
++        toImageStretches(stretchX),
++        toImageStretches(stretchY),
++        imageContent);
+ }
+ 
+ mbgl::MapOptions mapOptionsFromSettings(const QMapLibre::Settings &settings, const QSize &size, qreal pixelRatio) {
+@@ -1598,6 +1625,37 @@ void Map::addImage(const QString &id, const QImage &sprite) {
+     d_ptr->mapObj->getStyle().addImage(toStyleImage(id, sprite));
+ }
+ 
++/*!
++    \brief Add a style image with sprite metadata.
++    \param id The image identifier.
++    \param sprite The image.
++    \param pixelRatio The pixel ratio the image was authored at (1.0 for @1x, 2.0 for @2x).
++    \param sdf Whether the image is a signed distance field (recolourable with \c icon-color).
++    \param stretchX Horizontal stretch zones in image pixels, as in a sprite sheet's \c stretchX.
++    \param stretchY Vertical stretch zones in image pixels, as in a sprite sheet's \c stretchY.
++    \param content The content box in image pixels where text may be placed
++    (\c icon-text-fit); a null rectangle means none.
++
++    Adds the \a sprite with the identifier \a id the same way addImage(const QString &, const QImage &)
++    does, additionally carrying the metadata the
++    <a href="https://maplibre.org/maplibre-style-spec/sprite/">sprite format</a> allows.
++
++    \sa addImage()
++*/
++void Map::addImage(const QString &id,
++                   const QImage &sprite,
++                   qreal pixelRatio,
++                   bool sdf,
++                   const QList<QPair<float, float>> &stretchX,
++                   const QList<QPair<float, float>> &stretchY,
++                   const QRectF &content) {
++    if (sprite.isNull()) {
++        return;
++    }
++
++    d_ptr->mapObj->getStyle().addImage(toStyleImage(id, sprite, pixelRatio, sdf, stretchX, stretchY, content));
++}
++
+ /*!
+     \brief Remove a style image.
+     \param id The image identifier.
+diff --git a/src/core/map.hpp b/src/core/map.hpp
+index 6072d46d..00cf96fc 100644
+--- a/src/core/map.hpp
++++ b/src/core/map.hpp
+@@ -166,6 +166,13 @@ public:
+     void removeSource(const QString &id);
+ 
+     void addImage(const QString &id, const QImage &sprite);
++    void addImage(const QString &id,
++                  const QImage &sprite,
++                  qreal pixelRatio,
++                  bool sdf,
++                  const QList<QPair<float, float>> &stretchX = QList<QPair<float, float>>(),
++                  const QList<QPair<float, float>> &stretchY = QList<QPair<float, float>>(),
++                  const QRectF &content = QRectF());
+     void removeImage(const QString &id);
+ 
+     void addCustomLayer(const QString &id,

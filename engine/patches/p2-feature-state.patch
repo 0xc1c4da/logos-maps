@@ -1,0 +1,246 @@
+From: Logos Maps <maps@logos.co>
+Subject: [PATCH] Map: setFeatureState, getFeatureState, removeFeatureState
+
+Expose the renderer's feature state on QMapLibre::Map under the same
+locking contract as the queries (P1). Setters request a repaint and
+return false until a renderer exists; removals coalesce on the next frame,
+as in the core.
+
+Optional (capability-gated): hover/selection without source rewrites, §8.
+Requires P1 (shares its renderer forwarding).
+
+Upstream base: maplibre/maplibre-native-qt c3485f3 (docs/architecture.md section 14.1).
+---
+ src/core/map.cpp            | 103 ++++++++++++++++++++++++++++++++++++++++++++
+ src/core/map.hpp            |  14 ++++++
+ src/core/map_p.hpp          |  14 ++++++
+ src/core/map_renderer.cpp   |  20 +++++++++
+ src/core/map_renderer_p.hpp |  13 ++++++
+ 5 files changed, 164 insertions(+)
+
+diff --git a/src/core/map.cpp b/src/core/map.cpp
+index c420fc5c..7d2e5c93 100644
+--- a/src/core/map.cpp
++++ b/src/core/map.cpp
+@@ -1845,6 +1845,73 @@ QByteArray Map::querySourceFeatures(const QString &sourceId,
+         sourceId.toStdString(), mbgl::SourceQueryOptions(stringsFromList(sourceLayers), filterFromVariant(filter))));
+ }
+ 
++/*!
++    \brief Set the state of a feature.
++    \param sourceId The source identifier.
++    \param sourceLayer The source layer, required for vector sources; empty for GeoJSON sources.
++    \param featureId The feature identifier, as a string.
++    \param state Key/value pairs merged into the feature's state.
++
++    Feature state is read by style expressions through \c ["feature-state", key]
++    and is the cheap way to express hover and selection without touching the
++    source data. Returns \c false when no renderer exists yet.
++
++    Safe to call from the GUI thread while rendering happens on another thread.
++*/
++bool Map::setFeatureState(const QString &sourceId,
++                          const QString &sourceLayer,
++                          const QString &featureId,
++                          const QVariantMap &state) {
++    mbgl::FeatureState featureState;
++    for (auto it = state.constBegin(); it != state.constEnd(); ++it) {
++        featureState.emplace(it.key().toStdString(), GeoJSON::asPropertyValue(it.value()));
++    }
++
++    const std::optional<std::string> layer = sourceLayer.isEmpty() ? std::nullopt
++                                                                   : std::optional(sourceLayer.toStdString());
++    d_ptr->setFeatureState(sourceId.toStdString(), layer, featureId.toStdString(), featureState);
++    return d_ptr->hasRenderer();
++}
++
++/*!
++    \brief Get the state of a feature.
++    \param sourceId The source identifier.
++    \param sourceLayer The source layer, empty for GeoJSON sources.
++    \param featureId The feature identifier, as a string.
++    \return The feature's state, empty when unknown.
++*/
++QVariantMap Map::getFeatureState(const QString &sourceId, const QString &sourceLayer, const QString &featureId) const {
++    const std::optional<std::string> layer = sourceLayer.isEmpty() ? std::nullopt
++                                                                   : std::optional(sourceLayer.toStdString());
++    const mbgl::FeatureState state = d_ptr->getFeatureState(sourceId.toStdString(), layer, featureId.toStdString());
++
++    QVariantMap result;
++    for (const auto &item : state) {
++        result.insert(QString::fromStdString(item.first), variantFromValue(item.second));
++    }
++    return result;
++}
++
++/*!
++    \brief Remove feature state.
++    \param sourceId The source identifier.
++    \param sourceLayer The source layer, empty for GeoJSON sources.
++    \param featureId The feature identifier; empty removes the state of every feature in the source (layer).
++    \param stateKey The key to remove; empty removes the whole state.
++
++    Returns \c false when no renderer exists yet.
++*/
++bool Map::removeFeatureState(const QString &sourceId,
++                             const QString &sourceLayer,
++                             const QString &featureId,
++                             const QString &stateKey) {
++    auto optional = [](const QString &value) -> std::optional<std::string> {
++        return value.isEmpty() ? std::nullopt : std::optional(value.toStdString());
++    };
++    d_ptr->removeFeatureState(sourceId.toStdString(), optional(sourceLayer), optional(featureId), optional(stateKey));
++    return d_ptr->hasRenderer();
++}
++
+ /*!
+     \brief Create the renderer.
+     \param nativeTargetPtr The pointer to the native layer/window/surface.
+@@ -2316,6 +2383,42 @@ std::vector<mbgl::Feature> MapPrivate::querySourceFeatures(const std::string &so
+     return m_mapRenderer ? m_mapRenderer->querySourceFeatures(sourceId, options) : std::vector<mbgl::Feature>{};
+ }
+ 
++void MapPrivate::setFeatureState(const std::string &sourceId,
++                                 const std::optional<std::string> &sourceLayer,
++                                 const std::string &featureId,
++                                 const mbgl::FeatureState &state) {
++    const std::scoped_lock lock(m_mapRendererMutex);
++    if (m_mapRenderer == nullptr) {
++        return;
++    }
++    m_mapRenderer->setFeatureState(sourceId, sourceLayer, featureId, state);
++    requestRendering();
++}
++
++mbgl::FeatureState MapPrivate::getFeatureState(const std::string &sourceId,
++                                               const std::optional<std::string> &sourceLayer,
++                                               const std::string &featureId) const {
++    const std::scoped_lock lock(m_mapRendererMutex);
++    return m_mapRenderer ? m_mapRenderer->getFeatureState(sourceId, sourceLayer, featureId) : mbgl::FeatureState{};
++}
++
++void MapPrivate::removeFeatureState(const std::string &sourceId,
++                                    const std::optional<std::string> &sourceLayer,
++                                    const std::optional<std::string> &featureId,
++                                    const std::optional<std::string> &stateKey) {
++    const std::scoped_lock lock(m_mapRendererMutex);
++    if (m_mapRenderer == nullptr) {
++        return;
++    }
++    m_mapRenderer->removeFeatureState(sourceId, sourceLayer, featureId, stateKey);
++    requestRendering();
++}
++
++bool MapPrivate::hasRenderer() const {
++    const std::scoped_lock lock(m_mapRendererMutex);
++    return m_mapRenderer != nullptr;
++}
++
+ void *MapPrivate::currentDrawableTexture() const {
+     const std::scoped_lock lock(m_mapRendererMutex);
+     return m_mapRenderer ? m_mapRenderer->currentDrawableTexture() : nullptr;
+diff --git a/src/core/map.hpp b/src/core/map.hpp
+index 91ff8ada..5d5d8593 100644
+--- a/src/core/map.hpp
++++ b/src/core/map.hpp
+@@ -220,6 +220,20 @@ public:
+                                                  const QStringList &sourceLayers = QStringList(),
+                                                  const QVariant &filter = QVariant()) const;
+ 
++    // Feature state (read by ["feature-state", key] expressions). Both
++    // setters return false until a renderer exists.
++    bool setFeatureState(const QString &sourceId,
++                         const QString &sourceLayer,
++                         const QString &featureId,
++                         const QVariantMap &state);
++    [[nodiscard]] QVariantMap getFeatureState(const QString &sourceId,
++                                              const QString &sourceLayer,
++                                              const QString &featureId) const;
++    bool removeFeatureState(const QString &sourceId,
++                            const QString &sourceLayer = QString(),
++                            const QString &featureId = QString(),
++                            const QString &stateKey = QString());
++
+     // When rendering on a different thread,
+     // should be called on the render thread.
+     void createRenderer(void *nativeTargetPtr);
+diff --git a/src/core/map_p.hpp b/src/core/map_p.hpp
+index f84e3106..25dd3e50 100644
+--- a/src/core/map_p.hpp
++++ b/src/core/map_p.hpp
+@@ -66,6 +66,20 @@ public:
+     [[nodiscard]] std::vector<mbgl::Feature> querySourceFeatures(const std::string &sourceId,
+                                                                  const mbgl::SourceQueryOptions &options) const;
+ 
++    // Feature state, same locking contract as the queries.
++    void setFeatureState(const std::string &sourceId,
++                         const std::optional<std::string> &sourceLayer,
++                         const std::string &featureId,
++                         const mbgl::FeatureState &state);
++    [[nodiscard]] mbgl::FeatureState getFeatureState(const std::string &sourceId,
++                                                     const std::optional<std::string> &sourceLayer,
++                                                     const std::string &featureId) const;
++    void removeFeatureState(const std::string &sourceId,
++                            const std::optional<std::string> &sourceLayer,
++                            const std::optional<std::string> &featureId,
++                            const std::optional<std::string> &stateKey);
++    [[nodiscard]] bool hasRenderer() const;
++
+     mbgl::EdgeInsets margins;
+     std::unique_ptr<mbgl::Map> mapObj;
+ 
+diff --git a/src/core/map_renderer.cpp b/src/core/map_renderer.cpp
+index c9bdef39..88151330 100644
+--- a/src/core/map_renderer.cpp
++++ b/src/core/map_renderer.cpp
+@@ -186,6 +186,26 @@ std::vector<mbgl::Feature> MapRenderer::querySourceFeatures(const std::string &s
+     return m_renderer->querySourceFeatures(sourceId, options);
+ }
+ 
++void MapRenderer::setFeatureState(const std::string &sourceId,
++                                  const std::optional<std::string> &sourceLayer,
++                                  const std::string &featureId,
++                                  const mbgl::FeatureState &state) {
++    m_renderer->setFeatureState(sourceId, sourceLayer, featureId, state);
++}
++
++mbgl::FeatureState MapRenderer::getFeatureState(const std::string &sourceId,
++                                                const std::optional<std::string> &sourceLayer,
++                                                const std::string &featureId) const {
++    return m_renderer->getFeatureState(sourceId, sourceLayer, featureId);
++}
++
++void MapRenderer::removeFeatureState(const std::string &sourceId,
++                                     const std::optional<std::string> &sourceLayer,
++                                     const std::optional<std::string> &featureId,
++                                     const std::optional<std::string> &stateKey) {
++    m_renderer->removeFeatureState(sourceId, sourceLayer, featureId, stateKey);
++}
++
+ /*! \endcond */
+ 
+ } // namespace QMapLibre
+diff --git a/src/core/map_renderer_p.hpp b/src/core/map_renderer_p.hpp
+index 294eb904..72cccf9f 100644
+--- a/src/core/map_renderer_p.hpp
++++ b/src/core/map_renderer_p.hpp
+@@ -68,6 +68,19 @@ public:
+     [[nodiscard]] std::vector<mbgl::Feature> querySourceFeatures(const std::string &sourceId,
+                                                                  const mbgl::SourceQueryOptions &options) const;
+ 
++    // Feature state, same locking contract as the queries.
++    void setFeatureState(const std::string &sourceId,
++                         const std::optional<std::string> &sourceLayer,
++                         const std::string &featureId,
++                         const mbgl::FeatureState &state);
++    [[nodiscard]] mbgl::FeatureState getFeatureState(const std::string &sourceId,
++                                                     const std::optional<std::string> &sourceLayer,
++                                                     const std::string &featureId) const;
++    void removeFeatureState(const std::string &sourceId,
++                            const std::optional<std::string> &sourceLayer,
++                            const std::optional<std::string> &featureId,
++                            const std::optional<std::string> &stateKey);
++
+     // Thread-safe, called by the Frontend
+     void updateParameters(std::shared_ptr<mbgl::UpdateParameters> parameters);
+ 
