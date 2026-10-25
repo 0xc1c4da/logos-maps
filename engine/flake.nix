@@ -29,6 +29,7 @@
         ./patches/p9-cache-path-prefetch.patch
         ./patches/p2-feature-state.patch
         ./patches/p6-layer-zoom-visibility.patch
+        ./patches/p10-placement-transitions.patch
       ];
       presentPatches = builtins.filter (p: builtins.pathExists p) patchSet;
     in

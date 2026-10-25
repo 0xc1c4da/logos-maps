@@ -74,6 +74,9 @@ stdenv.mkDerivation {
     "-DMLN_QT_WITH_WIDGETS=${if withWidgets then "ON" else "OFF"}"
     "-DMLN_QT_WITH_INTERNAL_ICU=OFF"
     "-DMLN_QT_WITH_INTERNAL_SQLITE=OFF"
+    # P5: the storage ABI behind Settings::setFileSourceFactoryHook must be
+    # linkable by maps_view (mbgl::FileSource implementations).
+    "-DMLN_QT_WITH_EXPORTED_CORE=ON"
     "-DMLN_WITH_GLFW=OFF"
     "-DMLN_WITH_NODE=OFF"
     "-DCMAKE_BUILD_TYPE=Release"

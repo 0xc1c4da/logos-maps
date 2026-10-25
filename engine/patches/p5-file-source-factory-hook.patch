@@ -8,16 +8,52 @@ installs the header-only mapbox libraries (variant, geometry, feature,
 geojson, compatibility) the installed mbgl headers include, so the hook's
 types are usable from an installed tree.
 
+A hook that hands out an mbgl::FileSourceManager& is only usable if the
+core's storage ABI (FileSource, Response, Resource, RunLoop, the manager)
+is linkable from outside the library, and the Qt build compiles the vendored
+core with hidden visibility. MLN_QT_WITH_EXPORTED_CORE (default OFF) exports
+the core with default visibility, mirroring the core's own
+MLN_CREATE_AMALGAMATION override.
+
 Mandatory for maps_view (M14.1): providers, §10.
 
 Upstream base: maplibre/maplibre-native-qt c3485f3 (docs/architecture.md section 14.1).
 ---
+ CMakeLists.txt          |  1 +
+ src/core/CMakeLists.txt |  7 +++++++
  src/core/map.cpp        |  8 ++++++++
  src/core/settings.cpp   | 25 +++++++++++++++++++++++++
  src/core/settings.hpp   |  5 +++++
  src/core/settings_p.hpp |  1 +
- 4 files changed, 39 insertions(+)
+ 6 files changed, 47 insertions(+)
 
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -41,5 +41,6 @@ option(MLN_QT_WITH_CLANG_TIDY "Build QMapLibre with clang-tidy checks enabled" OFF)
+ option(MLN_QT_WITH_LTO "Build QMapLibre with Link-Time Optimization" OFF)
+ option(MLN_QT_WITH_RENDERER_DEBUGGING "Build QMapLibre with renderer debugging" OFF)
++option(MLN_QT_WITH_EXPORTED_CORE "Export the MapLibre Native core symbols from QMapLibre (implement mbgl::FileSource outside the library, see Settings::setFileSourceFactoryHook)" OFF)
+ 
+ if(MLN_QT_WITH_LTO)
+     include(CheckIPOSupported)
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -16,6 +16,13 @@ add_subdirectory(
+ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15)
+     target_compile_options(mbgl-core PRIVATE -Wno-sfinae-incomplete)
+ endif()
++if(MLN_QT_WITH_EXPORTED_CORE)
++    # The file source factory hook hands applications an mbgl::FileSourceManager&;
++    # implementing an mbgl::FileSource against it needs the core's storage ABI
++    # (Response, Resource, RunLoop, FileSourceManager) at link time. Mirrors the
++    # MLN_CREATE_AMALGAMATION override in the core's own CMakeLists.txt.
++    target_compile_options(mbgl-core PRIVATE -fvisibility=default)
++endif()
+ 
+ # glslang (pulled in only when MLN_WITH_VULKAN is enabled) calls option(BUILD_SHARED_LIBS)
+ # with no default, which forces the cache to OFF. That would make qt_add_library() below build
 diff --git a/src/core/map.cpp b/src/core/map.cpp
 index 2570147f..d14bd08d 100644
 --- a/src/core/map.cpp

@@ -1,5 +1,5 @@
 {
-  description = "maps_view - the Maps view: QML with a process-isolated C++ backend over maps_core";
+  description = "maps_view - the Maps view: MapLibre Native in a process-isolated C++ backend over maps_core";
 
   inputs = {
     # Pinned to a full commit so a from-scratch build is reproducible. Inside
@@ -18,12 +18,65 @@
       url = "github:0xc1c4da/logos-maps?dir=core";
       inputs.logos-module-builder.follows = "logos-module-builder";
     };
+
+    # The rendering engine: maplibre-native-qt with the docs/architecture.md
+    # section 14 patch set, built against the SDK's Qt (engine/flake.nix).
+    # Exposed to the module build as two external libraries, libQMapLibre and
+    # libQMapLibreQuickPrivate, both from this one derivation.
+    maps-engine = {
+      url = "github:0xc1c4da/logos-maps?dir=engine";
+    };
   };
 
-  outputs = inputs@{ logos-module-builder, ... }:
-    logos-module-builder.lib.mkLogosQmlModule {
-      src = ./.;
-      configFile = ./metadata.json;
-      flakeInputs = inputs;
-    };
+  outputs = inputs@{ self, logos-module-builder, maps-engine, ... }:
+    let
+      base = logos-module-builder.lib.mkLogosQmlModule {
+        src = ./.;
+        configFile = ./metadata.json;
+        flakeInputs = inputs;
+        externalLibInputs = {
+          QMapLibre = maps-engine;
+          QMapLibreQuickPrivate = maps-engine;
+        };
+        # The plugin's DT_NEEDED names the versioned sonames; the builder
+        # stages the unversioned .so beside the plugin. Add the soname links so
+        # $ORIGIN resolution works wherever the lib/ directory is copied to
+        # (section 14.5: the engine ships inside the maps_view package).
+        postInstall = ''
+          for lib in QMapLibre QMapLibreQuickPrivate; do
+            if [ -f "$out/lib/lib$lib.so" ]; then
+              for v in 4 4.0.0; do
+                [ -e "$out/lib/lib$lib.so.$v" ] || ln -s "lib$lib.so" "$out/lib/lib$lib.so.$v"
+              done
+            fi
+          done
+        '';
+      };
+
+      nixpkgs = logos-module-builder.inputs.nixpkgs;
+      lib = nixpkgs.lib;
+      linuxSystems = builtins.filter (lib.hasSuffix "-linux") (builtins.attrNames base.packages);
+
+      # section 16.1 / section 16.3 conformance suites: offscreen Qt Quick with
+      # llvmpipe, the view's own sources compiled straight into the test
+      # binaries (no plugin glue, no IPC).
+      viewTests = system:
+        import ./nix/view-tests.nix {
+          pkgs = import nixpkgs { inherit system; };
+          engine = maps-engine.packages.${system}.default;
+          src = self;
+        };
+    in
+      base // {
+        checks = base.checks // lib.genAttrs linuxSystems (system: base.checks.${system} // {
+          unit-tests = viewTests system;
+        });
+        packages = base.packages // lib.genAttrs linuxSystems (system: base.packages.${system} // {
+          # `nix build .#dev`: the dev launcher (devtools/maps_view_dev), a
+          # QGuiApplication that opens MapWindow.qml as a top-level window
+          # and drives a maps_core under logosctl (surface.transport: none).
+          dev = (viewTests system).passthru.devLauncher;
+          view-tests = viewTests system;
+        });
+      };
 }

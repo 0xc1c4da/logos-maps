@@ -1,0 +1,81 @@
+From: Logos Maps <maps@logos.co>
+Subject: [PATCH] Map: setPlacementTransitionsEnabled
+
+Map::setPlacementTransitionsEnabled(bool) / placementTransitionsEnabled()
+expose mbgl::style::TransitionOptions::enablePlacementTransitions, which
+the binding's setTransitionOptions(duration, delay) always leaves at the
+core default (true).
+
+Why: with placement transitions on, RenderOrchestrator::createRenderTree
+marks the symbol placement stale on every frame in which it is not
+recomputed (PlacementController::setPlacementStale) and
+PlacementController::hasTransitions then reports "needs repaint" for it, so
+Map::Impl::onDidFinishRenderingFrame schedules another frame forever
+(Continuous mode; the loop recurs after each placement update period). A
+Qt Quick item that honours Map::needsRendering therefore repaints
+continuously even on an idle map with no symbol layers. Turning the
+transitions off (symbols pop instead of fading) lets the map go idle.
+
+The flag lives in the style's transition options and is reset by every
+style load; callers re-apply it on MapChangeDidFinishLoadingStyle.
+
+Optional (capability-gated): maps_view idle guarantee (M11.2).
+
+Upstream base: maplibre/maplibre-native-qt c3485f3 (docs/architecture.md section 14.1).
+---
+ src/core/map.cpp | 30 ++++++++++++++++++++++++++++++
+ src/core/map.hpp |  2 ++
+ 2 files changed, 32 insertions(+)
+
+diff --git a/src/core/map.cpp b/src/core/map.cpp
+--- a/src/core/map.cpp
++++ b/src/core/map.cpp
+@@ -924,6 +924,36 @@
+ }
+ 
+ /*!
++    \brief Enable or disable symbol placement transitions.
++    \param enabled Whether placed symbols fade in and out.
++
++    With placement transitions enabled (the core default) the renderer
++    keeps requesting frames while a placement is \e stale, i.e. for as long
++    as the style has a placement at all: RenderOrchestrator marks the
++    placement stale on every frame in which it was not recomputed and
++    reports that as "needs repaint", so a Continuous-mode map never becomes
++    idle. Disabling the transitions makes symbols appear and disappear
++    without fading and lets the map stop rendering when nothing changes.
++
++    The flag is part of the style transition options and is therefore reset
++    whenever a new style is loaded; call this again after
++    \c MapChangeDidFinishLoadingStyle.
++*/
++void Map::setPlacementTransitionsEnabled(bool enabled) {
++    mbgl::style::TransitionOptions options = d_ptr->mapObj->getStyle().getTransitionOptions();
++    options.enablePlacementTransitions = enabled;
++    d_ptr->mapObj->getStyle().setTransitionOptions(options);
++}
++
++/*!
++    \brief Whether symbol placement transitions are enabled.
++    \return \c true if placed symbols fade in and out.
++*/
++bool Map::placementTransitionsEnabled() const {
++    return d_ptr->mapObj->getStyle().getTransitionOptions().enablePlacementTransitions;
++}
++
++/*!
+     \brief Add an annotation icon to the map.
+     \param name The icon name.
+     \param sprite The icon image.
+diff --git a/src/core/map.hpp b/src/core/map.hpp
+--- a/src/core/map.hpp
++++ b/src/core/map.hpp
+@@ -128,6 +128,8 @@
+     void setGestureInProgress(bool inProgress);
+ 
+     void setTransitionOptions(qint64 duration, qint64 delay = 0);
++    void setPlacementTransitionsEnabled(bool enabled);
++    [[nodiscard]] bool placementTransitionsEnabled() const;
+ 
+     void addAnnotationIcon(const QString &name, const QImage &sprite);
+ 

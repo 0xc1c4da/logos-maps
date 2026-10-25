@@ -1,20 +1,23 @@
-// View <-> backend contract for the Maps view.
+// View <-> backend contract for the Maps view (docs/architecture.md section 12.2).
 //
-// The backend is a thin, Qt-typed proxy over maps_core: SLOTs forward to the
-// core's module API, PROPs mirror its state, and layersChanged fires on every
-// core event so the view can refetch. Keep slots to <= 4 arguments; pass
-// structured data (layer definitions, GeoJSON) as one JSON string.
+// Exposed only to the host embedding the surface. The host never drives
+// scene content through this replica -- that goes through maps_core so every
+// module sees it. Keep slots to <= 4 arguments; structured data is one JSON
+// string.
 class MapsView
 {
-    SLOT(bool addLayer(QString layerId, QString layerJson))
-    SLOT(bool removeLayer(QString layerId))
-    SLOT(bool setFeatures(QString layerId, QString geojson))
-    SLOT(QString getLayer(QString layerId))
-    SLOT(QString getFeatures(QString layerId))
-    SLOT(QString listLayers())
+    PROP(QString viewId READONLY)             // "<module>/<session>/<n>", set once the view opened in maps_core
+    PROP(QString surfaceToken READONLY)       // RFC-2 handle for Logos.Surface ("" when surface.transport is none)
+    PROP(QString viewStateJson READONLY)      // camera, basemap, size, dpr, gestureState (throttled per frame)
+    PROP(QString capabilitiesJson READONLY)   // M11.1 report for this view
+    PROP(QString status="starting" READONLY)  // starting | opening | ready | error: <text>
 
-    PROP(int layerCount=0 READONLY)
-    PROP(QString status="Ready" READONLY)
+    SLOT(void setSize(int w, int h, double dpr))   // from the Surface item (RFC-5 rule 2); informative under Wayland
+    SLOT(void setOptions(QString json))            // same schema as maps_core.setViewOptions
+    SLOT(void camera(QString intentJson))          // same schema as maps_core.camera
+    SLOT(void setSession(QString session))         // RFC-3: host-chosen session, becomes the viewId prefix
 
-    SIGNAL(layersChanged())
+    SIGNAL(featurePicked(QString json))
+    SIGNAL(cameraIdle(QString json))
+    SIGNAL(attributionChanged(QString html))
 }

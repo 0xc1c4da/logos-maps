@@ -508,7 +508,7 @@ Every byte the engine loads — style, sprite, glyph, source TileJSON, tile — 
 
 ### 10.2 The seam
 
-**M10.1** The `ResourceProvider` seam is a `FileSource` subclass registered under the **ResourceLoader** slot — a composite that wraps the engine's default loader and consults module-defined providers first (`FileSourceManager::registerFileSourceFactory(FileSourceType::ResourceLoader, …)`, `file_source_manager.hpp:37–44`; this is exactly how `DefaultFileSourceManager` installs `MainResourceLoader`). Providers are selected by scheme or host prefix via `canRequest`. The engine, the binding and the styles are untouched; the seam is implemented in `maps_view` (§14 P5 is the only binding change: exposing the manager hook before `QMapLibre::Map` constructs its `FileSource`).
+**M10.1** The `ResourceProvider` seam is a `FileSource` subclass registered under the **Network** slot — a composite that wraps the engine's `OnlineFileSource` and consults module-defined providers first (`FileSourceManager::registerFileSourceFactory(FileSourceType::Network, …)`, `file_source_manager.hpp:37–44`). It deliberately does not replace the ResourceLoader slot: `MainResourceLoader` stays in front, so provider responses get the same database cache, expiry and etag/modified revalidation as HTTP ones (`main_resource_loader.cpp:39–62, 87–112` forward network responses into the database), and `asset://`, `file://`, `mbtiles://`, `pmtiles://` are still answered before the Network slot is reached. The composite honours `OnlineFileSource`'s `canRequest` contract (`LoadingMethod::Network` only). Providers are selected by scheme or host prefix via `canRequest`. The engine, the binding and the styles are untouched; the seam is implemented in `maps_view` (§14 P5 is the only binding change: exposing the manager hook before `QMapLibre::Map` constructs its `FileSource`).
 
 **M10.2** Provider interface (C++ in `maps_view`, mirrors `mbgl::FileSource`):
 
@@ -528,7 +528,7 @@ struct ResourceProvider {
 | Scheme | Provider | Notes |
 |---|---|---|
 | `https://`, `http://` | engine network + database cache | unchanged; URL rewrite via `ResourceTransform` (`resource_transform.hpp:12–16`) for key injection (PM `poor/map.py:46–93` key substitution) |
-| `pmtiles://<path>` , `mbtiles://<path>` | engine built-ins | archive basemaps (PMT `spec/v3/spec.md` §header 42, §directories 259, §metadata 362; MBT `1.3/spec.md:48, 99, 160`) |
+| `pmtiles://<url>` (inner URL: `file:///abs`, `http(s)://`, or a provider scheme) , `mbtiles://<abs path>` | engine built-ins | archive basemaps (PMT `spec/v3/spec.md` §header 42, §directories 259, §metadata 362; MBT `1.3/spec.md:48, 99, 160`) |
 | `logos://<module>/<path>` | **Logos provider**: resolves through `maps_core` to a module that implements the `tileProvider` contract (§12.5): `getResource(path, rangeStart, rangeEnd) → bytes` over Logos IPC | needs 4-arg IPC, `bytes` LIDL type (LIDL `spec.md:179–187`); used for storage-backed caches (STORAGE `storage_module_plugin.h:307–343` blob API) and for third-party tile modules |
 | `asset://` | engine asset source rooted at module assets | glyph packs, sprites |
 | `memory://` | in-process map of bytes | tests; synthetic raster overlays (image sources) |
@@ -712,6 +712,7 @@ Each patch is a small, upstreamable change tracked as a numbered file under `pat
 | P7 | Export `TextureNodeBase`/`TextureNodeOpenGL` from a public target or install the private headers | private `QMapLibre::QuickPrivate` only (`export_quick_p.hpp:11–14`; `src/quick/CMakeLists.txt:111–118`) | — |
 | P8 (optional) | `Map::addCustomGeometrySource(id, options, callbacks)` + `invalidateTile/Region` | `custom_geometry_source.hpp:19–47` not bound | — |
 | P9 | `Settings::setCacheDatabasePath` default to a non-`:memory:` path when `assetPath` set; `Map::setPrefetchZoomDelta`, `setDebugOptions` | `settings.cpp:364–365`; `map.hpp:139–151` unbound | — |
+| P10 (optional) | `Map::setPlacementTransitionsEnabled(bool)` / `placementTransitionsEnabled()` | `TransitionOptions::enablePlacementTransitions` is unreachable from the binding; with it on (the default) `RenderOrchestrator` marks placement stale on every frame where placement is not recomputed and `PlacementController::hasTransitions` reports true while stale (`placement.cpp:170–176`), so `needsRepaint` never clears and an idle map renders continuously. Off, symbols pop instead of fading and the map goes idle. The flag lives in the style and is reset on every style load; the view re-applies it on `styleReady`. | `Style::setTransitionOptions` (`style.hpp`) |
 
 Confirmed absences in the binding (checked against `map.hpp` 34–226 and `map.cpp` 1–1839): rendered/source feature queries, feature state, image metadata, layer zoom range, custom geometry sources, file-source hooks, free camera (MLN `map.hpp:159–167`), `renderStill` with camera (`map.hpp:50–54`). Appendix D lists the full inventory.
 
@@ -773,7 +774,7 @@ Each suite is a `nix check` discovered by `ws test` after `ws sync-graph`. Line 
 
 ### 16.1 Engine contract (`maps_view`, offscreen)
 
-Headless `QQuickWindow` with `QT_QPA_PLATFORM=offscreen`; loads a `memory://` style with one raster source. Asserts: `needsRendering` → one `updatePaintNode`; `resize` changes backend size by DPR (MLNQT `test/quick/tst_quick_map.qml`; `test/widgets/test_widgets.cpp` as shape); all `MapChange` codes reach M11.3 mapping; `styleJson()` round-trips a patched style.
+Headless `QQuickWindow`: `QT_QPA_PLATFORM=offscreen` on an Xvfb display with GLX (the offscreen QPA only provides OpenGL through its X11 variant), `QT_QUICK_BACKEND=rhi` (offscreen does not advertise `RhiBasedRendering`, so Qt Quick would otherwise pick the software scene graph), Mesa llvmpipe located via `__GLX_VENDOR_LIBRARY_NAME`/`__EGL_VENDOR_LIBRARY_DIRS`/`LIBGL_DRIVERS_PATH` (`view/nix/view-tests.nix`); loads a `memory://` style with one raster source. Asserts: `needsRendering` → one `updatePaintNode`; `resize` changes backend size by DPR (MLNQT `test/quick/tst_quick_map.qml`; `test/widgets/test_widgets.cpp` as shape); all `MapChange` codes reach M11.3 mapping; `styleJson()` round-trips a patched style.
 
 ### 16.2 Scene replay (`maps_core` + fake view)
 
@@ -781,7 +782,7 @@ Property-based: random op sequences over 3 sessions, 20 ids; invariants — coal
 
 ### 16.3 Provider suite
 
-In-process `FileSourceManager` with the composite loader: asserts order of consultation (asset → mbtiles → pmtiles → file → database → network → logos; MLN `main_resource_loader.cpp:69–117`); `logos://` provider honours range requests and maps timeout → `Connection` + `retryAfter`; missing tile → `NotFound` and parent tile rendered (prefetch delta); cache populated from provider responses with `expires` honoured; a PMTiles fixture (PMT spec v3 header/directory) and an MBTiles fixture (MBT 1.3) each serve z0–2.
+In-process `FileSourceManager` with the composite loader: asserts order of consultation (asset → mbtiles → pmtiles → file → database → providers → network, the composite occupying the Network slot per M10.1; MLN `main_resource_loader.cpp:69–117`); `logos://` provider honours range requests and maps timeout → `Connection` + `retryAfter`; missing tile → `NotFound` and parent tile rendered (prefetch delta); cache populated from provider responses with `expires` honoured; a PMTiles fixture (PMT spec v3 header/directory) and an MBTiles fixture (MBT 1.3) each serve z0–2.
 
 ### 16.4 Gesture matrix
 

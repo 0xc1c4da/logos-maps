@@ -5,20 +5,24 @@
   "type": "ui_qml",
   "interface": "universal",
   "category": "general",
-  "description": "Maps: the map view. Renders the layers held by maps_core, which any module can add to programmatically.",
+  "description": "Maps: the map view. Renders the retained scene held by maps_core with MapLibre Native in its own process and presents it to the host through a view surface (docs/architecture.md section 3, section 5).",
   "author": "0xc1c4da",
   "main": "maps_view_plugin",
   "icon": "src/icons/icon.png",
   "view": "qml/Main.qml",
+  "view_surface": true,
   "dependencies": ["maps_core"],
   "codegen": { "rep": "src/maps_view.rep" },
 
   "nix": {
     "packages": {
       "build": [],
-      "runtime": []
+      "runtime": ["qt6.qtdeclarative", "qt6.qtwayland"]
     },
-    "external_libraries": [],
+    "external_libraries": [
+      { "name": "QMapLibre" },
+      { "name": "QMapLibreQuickPrivate" }
+    ],
     "cmake": {
       "find_packages": [],
       "extra_sources": [],
