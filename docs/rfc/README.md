@@ -12,11 +12,11 @@ workspace first (branches `rfc/view-surface` in each repository), then offered u
 | [RFC-1](RFC-1-view-surface-ui-host.md) | `logos-view-module-runtime` | `ui-host --gui`: a `QGuiApplication` process for modules that declare `view_surface` | implemented at `ee5eefb` |
 | [RFC-2](RFC-2-surface-handshake.md) | `logos-view-module-runtime` | Surface handshake: `--surface-socket`, `app_id` token, `READY ... SURFACE <token>`, `ViewModuleHost::surfaceToken()` | implemented at `ee5eefb` |
 | [RFC-3](RFC-3-logos-surface-qml.md) | `logos-basecamp` | `Logos.Surface` host QML type available to sandboxed app QML | implemented at `37c9a57` |
-| [RFC-4](RFC-4-nested-compositor.md) | `logos-basecamp` | Nested Wayland compositor (`SurfaceCompositor`); rev 2 hardens it: guarded `wl_shm` reads (Qt patch), global allowlist with GPU buffers as policy, bounds, focus hygiene | implemented at `37c9a57`; rev 2 on `rfc/view-surface` (see table below) |
-| [RFC-5](RFC-5-lifecycle-and-metadata.md) | `logos-module-builder`, `logos-basecamp` | `view_surface` metadata key; lifecycle; rev 2 adds `SurfacePolicy`, the capability gate (specified) and the isolation record | implemented at `6a3994f` (builder) + `37c9a57` (Basecamp); rev 2 on `rfc/view-surface` |
+| [RFC-4](RFC-4-nested-compositor.md) | `logos-basecamp` | Nested Wayland compositor (`SurfaceCompositor`); rev 2 hardens it: guarded `wl_shm` reads (Qt patch), global allowlist with GPU buffers as policy, bounds, focus hygiene | implemented at `37c9a57`; rev 2 at `62c430f` (see table below) |
+| [RFC-5](RFC-5-lifecycle-and-metadata.md) | `logos-module-builder`, `logos-basecamp` | `view_surface` metadata key; lifecycle; rev 2 adds `SurfacePolicy`, the capability gate (specified) and the isolation record | implemented at `6a3994f` (builder) + `37c9a57` (Basecamp); rev 2 at `f73b358` (Basecamp `SurfacePolicy`) |
 | [RFC-6](RFC-6-other-transports.md) | platform | **The `SurfaceTransport` contract** (a–e), per-OS selection, the in-process `ViewContainer` for iOS/Android | normative (rev 2.1: `channel` is the default on every platform; `wayland` only with GPU buffers) |
-| [RFC-7](RFC-7-channel-transport.md) | `logos-view-module-runtime`, `logos-basecamp` | The `channel` transport: host-allocated slot ring (`shm` / `d3d11` / `iosurface`) over a bounded protocol on a local socket, credits, value-based input | implemented for `shm`; `d3d11`/`iosurface` written, not compiled here |
-| [RFC-8](RFC-8-client-api.md) | `logos-view-module-runtime`, `logos-module-builder` | `LogosViewSurface::window()`: the one window a module renders into on every transport | implemented |
+| [RFC-7](RFC-7-channel-transport.md) | `logos-view-module-runtime`, `logos-basecamp` | The `channel` transport: host-allocated slot ring (`shm` / `d3d11` / `iosurface`) over a bounded protocol on a local socket, credits, value-based input | implemented for `shm` at `1232d57`..`01bf4ef` (runtime) and `f73b358` (Basecamp); `d3d11`/`iosurface` written, not compiled here |
+| [RFC-8](RFC-8-client-api.md) | `logos-view-module-runtime`, `logos-module-builder` | `LogosViewSurface::window()`: the one window a module renders into on every transport | implemented at `1232d57` (runtime), `249eb33` (builder) |
 
 Design invariants every RFC preserves (spec M3.1–M3.3):
 
@@ -44,20 +44,42 @@ were run against (spec §16.6/§16.7, `view/tests/basecamp-surface.mjs`, `view/t
 
 | Repository | `rfc/view-surface` | Upstream base | RFC commits | PR |
 |---|---|---|---|---|
-| `logos-view-module-runtime` | `ee5eefb` | `a04b463` (main) | `f8f9424` (RFC-1, RFC-2), `ee5eefb` (RFC-2 amendments) | one PR, two commits |
-| `logos-module-builder` | `6a3994f` | `8f56bf8` (main) | `6a3994f` (RFC-5 part A) | one PR; the branch also carries three unrelated local commits (`46f4990`, `8b6d681`, `6e3f7a5`, nim packaging) that sit below it — `6a3994f` cherry-picks cleanly onto `8f56bf8`, so the PR can be opened from a rebased copy |
-| `logos-basecamp` | `37c9a57` | `572f722` (main) | `37c9a57` (RFC-3, RFC-4, RFC-5 part B) | one PR; the branch sits on `5454a52` (dev build takes its GL stack from the closure), which is a prerequisite for running the dev launcher with GL at all and should land first or be included — `37c9a57` cherry-picks cleanly onto `572f722` |
+| `logos-view-module-runtime` | `01bf4ef` | `a04b463` (main) | `f8f9424` (RFC-1, RFC-2), `ee5eefb` (RFC-2 amendments), `1232d57` (RFC-7, RFC-8: `LogosViewSurface` library, `d3d11`/`iosurface` skeletons), `b5f170a` (RFC-7: `ui-host --surface-transport channel`), `01bf4ef` (tests) | one PR, five commits; `d3d11`/`iosurface` are marked unverified in the sources and the commit |
+| `logos-module-builder` | `249eb33` | `8f56bf8` (main) | `6a3994f` (RFC-5 part A), `249eb33` (RFC-8: runtime include dir and library for `view_surface` modules) | one PR; the branch also carries three unrelated local commits (`46f4990`, `8b6d681`, `6e3f7a5`, nim packaging) that sit below it — both RFC commits cherry-pick cleanly onto `8f56bf8`, so the PR can be opened from a rebased copy |
+| `logos-basecamp` | `6cfae7f` | `572f722` (main) | `37c9a57` (RFC-3, RFC-4, RFC-5 part B), `62c430f` (RFC-4 rev 2 hardening H1–H4, qtwayland patch), `f73b358` (RFC-6/RFC-7 backends, `SurfaceChannelHost`, `SurfacePolicy`, `SurfaceTransportSelector`), `6cfae7f` (tests, `docs/spec.md`) | one PR; the branch sits on `5454a52` (dev build takes its GL stack from the closure), which is a prerequisite for running the dev launcher with GL at all and should land first or be included; its `logos-view-module-runtime` input must be bumped to the merged runtime commit |
 
-Order: runtime first (RFC-1/2 are what Basecamp links against), builder next (RFC-5 A
-is independent and tiny), Basecamp last with its `logos-view-module-runtime` input
-bumped to the merged runtime commit. Nothing is pushed from this workspace; the
-branches are local.
+Order: runtime first (RFC-1/2/7/8 are what Basecamp and the builder link against),
+builder next (RFC-5 A and RFC-8's include dir), Basecamp last with its
+`logos-view-module-runtime` input bumped to the merged runtime commit. Each branch was
+tested at its tip; intermediate commits build on Linux but were not re-tested one by one.
+Nothing is pushed from this workspace; the branches are local.
 
-What was verified before offering them (all on Qt 6.9.2 from the SDK's nixpkgs, Linux):
+What was verified before offering them (all on Qt 6.9.2 from the SDK's nixpkgs, Linux,
+Wayland session, Radeon 8060S):
 
-- runtime `unit-tests` (handshake, `--gui`, token), builder `tests/test-parse-metadata.nix`
-  (`view_surface`), Basecamp `unit-tests` incl. `tests/view_surface_test.cpp`.
-- `maps_view` in Basecamp offscreen (`nix run view#ui-tests`) and live on a Wayland
-  desktop: surface bound, `wayland-shm`, frames visible, teardown clean.
-- Not verified: `wayland-dmabuf` (software GL only on this host, spec O11), macOS/Windows
-  (RFC-6 is informative), live DPR change (RFC-5 rule 3).
+- runtime `unit-tests` (handshake, `--gui`, token, `test_surface_channel` 14 cases
+  offscreen and on GL via `LOGOS_SURFACE_TEST_GL=1 LOGOS_SURFACE_TEST_QPA=wayland`,
+  `test_surface_view`), builder `tests/*` (incl. `view_surface` metadata and
+  `view-interface-abi`), Basecamp `unit-tests` incl. `tests/view_surface_test.cpp`
+  (item suite on both families, raw-client probe/oversize/truncate) and
+  `tests/surface_channel_test.cpp`; Basecamp smoke, sandbox, qml, integration, shutdown,
+  symbol-gate and link-gate checks; `ws check-qt`.
+- `maps_view` in Basecamp headless (`nix run view#ui-tests`) over the default transport
+  (`channel-shm`) and over `LOGOS_SURFACE_TRANSPORT=wayland` (`wayland-shm`), and the
+  `logosctl` end-to-end snapshot (`view/tests/logosctl/e2e.sh`), same package for all.
+- `maps_view` live on the desktop over both families with the same package: surface
+  bound, frames visible, pan/zoom through the inspector, teardown clean. Measured under
+  camera motion at 2400×1350: `channel-shm` 2.1 ms render + 2.1 ms readback per frame
+  (~31 fps delivered, paced by the host's paint); `wayland-shm` ~340 ms per frame on
+  `llvmpipe` — which is why RFC-6 rev 2.1 makes `channel` the default everywhere.
+- Not verified: `channel-d3d11` / `channel-iosurface` (no Windows/macOS build host; the
+  code compiles only there), `wayland-dmabuf` (this host's EGL exposes no
+  `EGL_WL_bind_wayland_display`, so the compositor's client buffer integration never
+  comes up and `gpuBuffersAvailable()` is false — RFC-4 H5 therefore also unexercised),
+  the in-process `ViewContainer` (RFC-6 §4, specified only), the capability gate
+  (RFC-5 rev 2 Part C, specified with hook points only), live DPR change (RFC-5 rule 3).
+- Known follow-ups, not regressions: the `channel` ring is paced to the host's paint
+  (a slot returns after its successor has been painted, RFC-7 §5), so delivered frame
+  rate tracks the host's compositing rather than the view's render rate;
+  `wp_fractional_scale_v1` on the compositor is specified (RFC-4 rev 2) and not
+  implemented.
