@@ -23,5 +23,7 @@ MAPS_EVENT(featureStateChanged)
 MAPS_EVENT(cacheClearRequested)
 MAPS_EVENT(viewEvent)
 MAPS_EVENT(catalogueChanged)
+MAPS_EVENT(groupVisibilityChanged)
+MAPS_EVENT(calloutContentChanged)
 
 #undef MAPS_EVENT

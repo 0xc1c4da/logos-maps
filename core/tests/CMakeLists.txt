@@ -30,6 +30,7 @@ logos_test(
         test_capability.cpp
         test_registry.cpp
         test_projection.cpp
+        test_groups.cpp
     EXTRA_INCLUDES
         ${CMAKE_CURRENT_SOURCE_DIR}/../src
     EXTRA_LINK_LIBS

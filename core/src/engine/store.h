@@ -107,8 +107,12 @@ private:
 };
 
 // Order in which views apply published ops (M6.5): removes first (layers,
-// then sources, then images), then putSource, replaceGeoJson, putImage,
-// putLayer (in session layer order). Exposed for tests.
+// then sources, images, groups), then putSource, replaceGeoJson, putImage,
+// putGroup, putLayer (in session layer order). Exposed for tests.
 int opRank(const std::string& op);
+
+// M6.3b callout shape, shared by putLayer and setCalloutContent: returns the
+// normalised {title, subtitle?, icon?, actions?} or throws MapsError.
+json normalizeCallout(const json& callout);
 
 }  // namespace maps::engine

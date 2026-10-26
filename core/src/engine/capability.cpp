@@ -65,6 +65,13 @@ json defaultCapabilities(const json& limits) {
         setPath(c, k, false);
     // patchFeatures is implemented core-side (M6.4): always available.
     setPath(c, "scene.patchFeatures", true);
+    // Groups and callout declarations are accepted by core (M6.3a/b); views
+    // report whether they render them through chrome.* (§8.4).
+    setPath(c, "scene.groups", true);
+    setPath(c, "scene.callouts", true);
+    setPath(c, "chrome.items", json::array());
+    setPath(c, "chrome.follow", false);
+    setPath(c, "chrome.pin", false);
     setPath(c, "provider.schemes", json::array());
     setPath(c, "surface.transport", "none");
     setPath(c, "limits.maxImageSize", limits.value("maxImageBytes", 0));

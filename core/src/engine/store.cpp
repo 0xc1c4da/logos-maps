@@ -14,7 +14,8 @@ const std::set<std::string> kLayerTypes = {"fill", "line", "symbol", "circle", "
                                            "raster", "hillshade", "heatmap", "background"};
 const std::set<std::string> kOps = {"putSource", "replaceGeoJson", "patchFeatures", "putImage", "putLayer",
                                     "setPaint", "setLayout", "setFilter", "placeLayer", "removeLayer",
-                                    "removeSource", "removeImage", "dropSession"};
+                                    "removeSource", "removeImage", "dropSession", "putGroup", "removeGroup"};
+constexpr std::size_t kMaxCalloutActions = 8;
 
 struct OpError {
     std::string code;
@@ -61,7 +62,48 @@ std::size_t base64DecodedSize(const std::string& b64) {
     return b64.size() * 3 / 4 - pad;
 }
 
+void optionalString(const json& o, const char* key, std::optional<std::string>& out) {
+    if (!o.contains(key) || o[key].is_null()) return;
+    if (!o[key].is_string()) fail("maps.badArgument", std::string("'") + key + "' must be a string");
+    out = o[key].get<std::string>();
+}
+
 }  // namespace
+
+// M6.3b: {title, subtitle?, icon?, actions?: [{id, label}] (<= 8)}. Title,
+// subtitle and icon are property templates; the view substitutes them.
+static json validateCallout(const json& c) {
+    if (!c.is_object()) fail("maps.badArgument", "callout must be an object");
+    json out = json::object();
+    out["title"] = requireString(c, "title");
+    for (const char* k : {"subtitle", "icon"}) {
+        if (!c.contains(k) || c[k].is_null()) continue;
+        if (!c[k].is_string()) fail("maps.badArgument", std::string("callout.") + k + " must be a string");
+        out[k] = c[k];
+    }
+    if (c.contains("actions") && !c["actions"].is_null()) {
+        if (!c["actions"].is_array()) fail("maps.badArgument", "callout.actions must be an array");
+        if (c["actions"].size() > kMaxCalloutActions) fail("maps.badArgument", "callout.actions has more than 8 entries");
+        json actions = json::array();
+        std::set<std::string> seen;
+        for (const auto& a : c["actions"]) {
+            if (!a.is_object()) fail("maps.badArgument", "callout.actions entries must be objects");
+            json act = {{"id", requireLocalId(a, "id")}, {"label", requireString(a, "label")}};
+            if (!seen.insert(act["id"].get<std::string>()).second) fail("maps.badArgument", "duplicate callout action id");
+            actions.push_back(act);
+        }
+        out["actions"] = actions;
+    }
+    return out;
+}
+
+json normalizeCallout(const json& c) {
+    try {
+        return validateCallout(c);
+    } catch (const OpError& e) {
+        throw MapsError(e.code, e.message);
+    }
+}
 
 // ── result ───────────────────────────────────────────────────────────────
 
@@ -77,11 +119,13 @@ int opRank(const std::string& op) {
     if (op == "removeLayer") return 1;
     if (op == "removeSource") return 2;
     if (op == "removeImage") return 3;
-    if (op == "putSource") return 4;
-    if (op == "replaceGeoJson") return 5;
-    if (op == "putImage") return 6;
-    if (op == "putLayer") return 7;
-    return 8;
+    if (op == "removeGroup") return 4;
+    if (op == "putSource") return 5;
+    if (op == "replaceGeoJson") return 6;
+    if (op == "putImage") return 7;
+    if (op == "putGroup") return 8;   // before the layers that name it
+    if (op == "putLayer") return 9;
+    return 10;
 }
 
 // ── working copy ─────────────────────────────────────────────────────────
@@ -206,6 +250,46 @@ void Store::validateAndApply(Working& w, std::size_t, const json& op) {
         return;
     }
 
+    if (kind == "putGroup") {
+        const std::string local = requireLocalId(op, "id");
+        Group g;
+        g.id = globalId(w.sessionName, local);
+        g.title = requireString(op, "title");
+        optionalString(op, "icon", g.icon);
+        optionalString(op, "description", g.description);
+        for (const char* k : {"defaultVisible", "toggleable"}) {
+            if (!op.contains(k) || op[k].is_null()) continue;
+            if (!op[k].is_boolean()) fail("maps.badArgument", std::string("'") + k + "' must be a boolean");
+            (std::string(k) == "defaultVisible" ? g.defaultVisible : g.toggleable) = op[k].get<bool>();
+        }
+        if (op.contains("order") && !op["order"].is_null()) {
+            if (!op["order"].is_number_integer()) fail("maps.badArgument", "'order' must be an integer");
+            g.order = op["order"].get<int>();
+        }
+        g.legend = op.value("legend", json());
+        if (!g.legend.is_null()) {
+            if (!g.legend.is_array()) fail("maps.badArgument", "legend must be an array");
+            for (const auto& e : g.legend) {
+                if (!e.is_object() || !e.contains("label") || !e["label"].is_string())
+                    fail("maps.badArgument", "legend entries need a string label");
+                for (const char* k : {"color", "image"})
+                    if (e.contains(k) && !e[k].is_null() && !e[k].is_string())
+                        fail("maps.badArgument", std::string("legend.") + k + " must be a string");
+            }
+        }
+        s.groups[g.id] = g;
+        return;
+    }
+
+    if (kind == "removeGroup") {
+        const std::string gid = globalId(w.sessionName, requireLocalId(op, "id"));
+        if (!s.groups.erase(gid)) fail("maps.unknownId", "unknown group");
+        // Removing a group ungroups its layers; they stay and become visible (M6.3a).
+        for (auto& l : s.layers)
+            if (l.group && *l.group == gid) l.group.reset();
+        return;
+    }
+
     if (kind == "putLayer") {
         const std::string local = requireLocalId(op, "id");
         const std::string type = requireString(op, "type");
@@ -250,6 +334,19 @@ void Store::validateAndApply(Working& w, std::size_t, const json& op) {
             l.placement = Placement::fromJson(op.value("placement", json()), w.sessionName);
         } catch (const std::invalid_argument& e) {
             fail("maps.badArgument", e.what());
+        }
+        if (op.contains("group") && !op["group"].is_null()) {
+            if (!op["group"].is_string()) fail("maps.badArgument", "group must be a string");
+            const std::string g = op["group"].get<std::string>();
+            if (g.find(':') != std::string::npos || !isValidLocalId(g)) fail("maps.badArgument", "group must be a local group id");
+            const std::string ggid = globalId(w.sessionName, g);
+            if (!s.groups.count(ggid)) fail("maps.unknownId", "layer '" + local + "' references unknown group '" + g + "'");
+            l.group = ggid;
+        }
+        if (op.contains("callout") && !op["callout"].is_null()) l.callout = validateCallout(op["callout"]);
+        if (op.contains("selectable") && !op["selectable"].is_null()) {
+            if (!op["selectable"].is_boolean()) fail("maps.badArgument", "selectable must be a boolean");
+            l.selectable = op["selectable"].get<bool>();
         }
         if (Layer* existing = s.findLayer(l.id)) *existing = l;
         else s.layers.push_back(l);
@@ -320,6 +417,16 @@ json Store::diffSession(const Session* before, const Session& after) const {
             if (!after.sources.count(id)) add({{"op", "removeSource"}, {"id", id}});
         for (const auto& [id, img] : before->images)
             if (!after.images.count(id)) add({{"op", "removeImage"}, {"id", id}});
+        for (const auto& [id, g] : before->groups)
+            if (!after.groups.count(id)) add({{"op", "removeGroup"}, {"id", id}});
+    }
+    for (const auto& [id, g] : after.groups) {
+        const Group* old = before && before->groups.count(id) ? &before->groups.at(id) : nullptr;
+        if (!old || old->toJson() != g.toJson()) {
+            json op = g.toJson();
+            op["op"] = "putGroup";
+            add(op);
+        }
     }
     for (const auto& [id, src] : after.sources) {
         const Source* old = before && before->sources.count(id) ? &before->sources.at(id) : nullptr;
@@ -418,7 +525,8 @@ BatchResult Store::applyBatch(const std::string& sessionName, const json& batch,
 
     // A newly created, still-empty session is not committed: a batch of only
     // rejected ops must not leave a ghost session behind.
-    const bool sessionHasContent = !w.session.sources.empty() || !w.session.layers.empty() || !w.session.images.empty();
+    const bool sessionHasContent = !w.session.sources.empty() || !w.session.layers.empty() ||
+                                   !w.session.images.empty() || !w.session.groups.empty();
     if (!existing && !sessionHasContent) {
         result.revision = m_revision;
         return result;

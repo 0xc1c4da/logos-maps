@@ -48,11 +48,22 @@ json withV(json j) {
     return j;
 }
 
-const std::set<std::string> kIntents = {"jumpTo", "easeTo", "flyTo", "fitBounds", "fitCoordinates", "cancel"};
+const std::set<std::string> kIntents = {"jumpTo", "easeTo", "flyTo", "fitBounds", "fitCoordinates", "fitSession", "cancel"};
 const std::set<std::string> kViewTopics = {
     "frameRendered", "cameraChanged", "cameraIdle", "gestureBegan", "gestureEnded", "featurePicked",
     "trackedMoved", "basemapLoading", "basemapLoaded", "basemapFailed", "snapshotReady", "providerRequest",
-    "attributionChanged", "cacheStats", "styleReady"};
+    "attributionChanged", "cacheStats", "styleReady",
+    // rev 0.4 chrome (§8.4, §12.4)
+    "calloutOpened", "calloutAction", "calloutClosed", "pinDropped", "pinCleared", "followChanged"};
+
+// Stored view option: the global group ids hidden in this view (M6.3a).
+json& hiddenGroupsOf(ViewRecord& v) {
+    json& options = v.state["options"];
+    if (!options.is_object()) options = json::object();
+    json& hidden = options["hiddenGroups"];
+    if (!hidden.is_array()) hidden = json::array();
+    return hidden;
+}
 
 }  // namespace
 
@@ -185,6 +196,68 @@ bool MapsCoreImpl::clearFeatureState(const std::string& session, const std::stri
     return true;
 }
 
+// ── groups and callouts ──────────────────────────────────────────────────
+
+std::string MapsCoreImpl::listGroups(const std::optional<std::string>& session) {
+    std::vector<json> entries;
+    for (const auto& [name, s] : m_store.scene().sessions) {
+        if (session && !session->empty() && name != *session) continue;
+        for (const auto& [gid, g] : s.groups) {
+            json e = g.toJson();
+            e["session"] = name;
+            json layers = json::array();
+            for (const auto& l : s.layers)
+                if (l.group && *l.group == gid) layers.push_back(l.id);
+            e["layers"] = layers;
+            entries.push_back(std::move(e));
+        }
+    }
+    std::stable_sort(entries.begin(), entries.end(), [](const json& a, const json& b) {
+        const int oa = a["order"].get<int>(), ob = b["order"].get<int>();
+        if (oa != ob) return oa < ob;
+        return a["id"].get<std::string>() < b["id"].get<std::string>();
+    });
+    return json{{"v", 1}, {"groups", entries}}.dump();
+}
+
+bool MapsCoreImpl::setGroupVisible(const std::string& viewId, const std::string& session, const std::string& groupId, bool visible) {
+    if (!isValidSessionName(session) || groupId.empty()) return false;
+    const Session* s = m_store.scene().findSession(session);
+    const std::string gid = groupId.find(':') == std::string::npos ? globalId(session, groupId) : groupId;
+    if (!s || !s->findGroup(gid)) return false;
+    std::vector<std::string> targets;
+    if (viewId.empty()) targets = m_views.ids();
+    else if (m_views.find(viewId)) targets.push_back(viewId);
+    if (targets.empty()) return false;
+    for (const auto& id : targets) {
+        ViewRecord* v = m_views.find(id);
+        json& hidden = hiddenGroupsOf(*v);
+        auto it = std::find(hidden.begin(), hidden.end(), json(gid));
+        const bool wasHidden = it != hidden.end();
+        if (visible == !wasHidden) continue;  // already in the requested state
+        if (visible) hidden.erase(it);
+        else hidden.push_back(gid);
+        viewOptionsChanged(json{{"v", 1}, {"viewId", id}, {"options", v->state["options"]}}.dump());
+        groupVisibilityChanged(json{{"v", 1}, {"viewId", id}, {"session", session}, {"groupId", gid}, {"visible", visible}}.dump());
+    }
+    return true;
+}
+
+bool MapsCoreImpl::setCalloutContent(const std::string& viewId, const std::string& contentJson) {
+    if (!viewId.empty() && !m_views.find(viewId)) return false;
+    if (viewId.empty() && m_views.size() == 0) return false;
+    json content;
+    std::string err;
+    if (!parseJson(contentJson, content, err) || !content.is_object()) return false;
+    try {
+        content = normalizeCallout(content);
+    } catch (const MapsError&) {
+        return false;
+    }
+    calloutContentChanged(json{{"v", 1}, {"viewId", viewId}, {"content", content}}.dump());
+    return true;
+}
+
 // ── basemaps ─────────────────────────────────────────────────────────────
 
 std::string MapsCoreImpl::basemapsFile() const {
@@ -313,8 +386,39 @@ StdLogosResult MapsCoreImpl::camera(const std::string& viewId, const std::string
     std::string err;
     if (!parseJson(intentJson, intent, err) || !intent.is_object()) return fail("maps.badArgument", "intent must be a JSON object");
     if (!versionOk(intent)) return fail("maps.badArgument", "unsupported intent version");
-    const std::string type = intent.value("type", "");
-    if (!kIntents.count(type)) return fail("maps.badArgument", "intent.type must be one of jumpTo|easeTo|flyTo|fitBounds|fitCoordinates|cancel");
+    std::string type = intent.value("type", "");
+    if (!kIntents.count(type)) return fail("maps.badArgument", "intent.type must be one of jumpTo|easeTo|flyTo|fitBounds|fitCoordinates|fitSession|cancel");
+    if (intent.contains("keepFollow") && !intent["keepFollow"].is_boolean()) return fail("maps.badArgument", "keepFollow must be a boolean");
+    if (type == "fitSession") {
+        // M7.4a: resolved here from the authoritative collections.
+        const std::string session = intent.value("session", "");
+        if (!isValidSessionName(session)) return fail("maps.badArgument", "fitSession needs session <module>/<name>");
+        const Session* s = m_store.scene().findSession(session);
+        if (!s) return fail("maps.unknownSession", "unknown session '" + session + "'");
+        std::optional<std::string> sourceGid;
+        if (intent.contains("sourceId") && !intent["sourceId"].is_null()) {
+            if (!intent["sourceId"].is_string()) return fail("maps.badArgument", "sourceId must be a string");
+            sourceGid = globalId(session, intent["sourceId"].get<std::string>());
+            if (!s->sources.count(*sourceGid)) return fail("maps.unknownId", "unknown source '" + intent["sourceId"].get<std::string>() + "'");
+        }
+        const auto ext = sessionExtent(*s, sourceGid);
+        if (!ext) return fail("maps.unknownId", "session '" + session + "' has no geometry to fit");
+        const double maxZoom = intent.contains("maxZoom") && intent["maxZoom"].is_number() ? intent["maxZoom"].get<double>() : 16.0;
+        json resolved = {{"v", 1}, {"resolvedFrom", "fitSession"}, {"session", session}};
+        for (const char* k : {"animation", "padding", "force", "keepFollow"})
+            if (intent.contains(k)) resolved[k] = intent[k];
+        if (ext->w == ext->e && ext->s == ext->n) {
+            resolved["type"] = "easeTo";
+            resolved["center"] = json::array({ext->w, ext->s});
+            resolved["zoom"] = maxZoom;
+        } else {
+            resolved["type"] = "fitBounds";
+            resolved["bounds"] = json::array({json::array({ext->w, ext->s}), json::array({ext->e, ext->n})});
+            resolved["maxZoom"] = maxZoom;
+        }
+        intent = resolved;
+        type = resolved["type"].get<std::string>();
+    }
     if (type == "fitBounds" && !(intent.contains("bounds") && intent["bounds"].is_array() && intent["bounds"].size() == 2))
         return fail("maps.badArgument", "fitBounds needs bounds [[w,s],[e,n]]");
     if (type == "fitCoordinates" && !(intent.contains("coordinates") && intent["coordinates"].is_array() && !intent["coordinates"].empty()))

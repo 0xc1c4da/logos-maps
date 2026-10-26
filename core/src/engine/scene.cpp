@@ -1,5 +1,6 @@
 #include "engine/scene.h"
 
+#include <algorithm>
 #include <cctype>
 #include <stdexcept>
 
@@ -97,6 +98,18 @@ json Layer::toJson() const {
     if (!filter.is_null()) j["filter"] = filter;
     j["layout"] = layout.is_null() ? json::object() : layout;
     j["paint"] = paint.is_null() ? json::object() : paint;
+    if (group) j["group"] = *group;
+    if (!callout.is_null()) j["callout"] = callout;
+    if (selectable) j["selectable"] = *selectable;
+    return j;
+}
+
+json Group::toJson() const {
+    json j = {{"id", id}, {"title", title}, {"defaultVisible", defaultVisible},
+              {"toggleable", toggleable}, {"order", order}};
+    if (icon) j["icon"] = *icon;
+    if (description) j["description"] = *description;
+    if (!legend.is_null()) j["legend"] = legend;
     return j;
 }
 
@@ -117,13 +130,58 @@ const Layer* Session::findLayer(const std::string& id) const {
     return nullptr;
 }
 
+const Group* Session::findGroup(const std::string& id) const {
+    auto it = groups.find(id);
+    return it == groups.end() ? nullptr : &it->second;
+}
+
 json Session::toJson() const {
-    json srcs = json::object(), imgs = json::object(), lyrs = json::array();
+    json srcs = json::object(), imgs = json::object(), grps = json::object(), lyrs = json::array();
     for (const auto& [id, s] : sources) srcs[id] = s.toJson();
     for (const auto& [id, i] : images) imgs[id] = i.toJson();
+    for (const auto& [id, g] : groups) grps[id] = g.toJson();
     for (const auto& l : layers) lyrs.push_back(l.toJson());
     return json{{"name", name}, {"owner", owner}, {"priority", priority},
-                {"sources", srcs}, {"images", imgs}, {"layers", lyrs}};
+                {"sources", srcs}, {"images", imgs}, {"groups", grps}, {"layers", lyrs}};
+}
+
+// ── extent ───────────────────────────────────────────────────────────────
+
+namespace {
+void walkCoordinates(const json& c, std::optional<Extent>& ext) {
+    if (!c.is_array() || c.empty()) return;
+    if (c[0].is_number()) {
+        if (c.size() < 2 || !c[1].is_number()) return;
+        const double lon = c[0].get<double>(), lat = c[1].get<double>();
+        if (!ext) ext = Extent{lon, lat, lon, lat};
+        else {
+            ext->w = std::min(ext->w, lon); ext->e = std::max(ext->e, lon);
+            ext->s = std::min(ext->s, lat); ext->n = std::max(ext->n, lat);
+        }
+        return;
+    }
+    for (const auto& child : c) walkCoordinates(child, ext);
+}
+
+void walkGeometry(const json& g, std::optional<Extent>& ext) {
+    if (!g.is_object()) return;
+    if (g.contains("geometries") && g["geometries"].is_array()) {
+        for (const auto& sub : g["geometries"]) walkGeometry(sub, ext);
+        return;
+    }
+    if (g.contains("coordinates")) walkCoordinates(g["coordinates"], ext);
+}
+}  // namespace
+
+std::optional<Extent> sessionExtent(const Session& s, const std::optional<std::string>& sourceGlobalId) {
+    std::optional<Extent> ext;
+    for (const auto& [id, src] : s.sources) {
+        if (sourceGlobalId && id != *sourceGlobalId) continue;
+        if (src.type != "geojson" || !src.data.is_object() || !src.data.contains("features")) continue;
+        for (const auto& f : src.data["features"])
+            if (f.is_object() && f.contains("geometry")) walkGeometry(f["geometry"], ext);
+    }
+    return ext;
 }
 
 Session* Scene::findSession(const std::string& name) {

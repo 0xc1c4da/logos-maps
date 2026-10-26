@@ -52,6 +52,22 @@ struct Layer {
     json layout;   // object
     json paint;    // object
     Placement placement;
+    std::optional<std::string> group;  // global group id in the same session (M6.3a)
+    json callout;                      // null or {title, subtitle?, icon?, actions?[]} (M6.3b)
+    std::optional<bool> selectable;    // M6.3b; absent = (callout present)
+    json toJson() const;
+};
+
+// A user-toggleable set of layers within one session (M6.3a). Visibility is
+// per view and lives in the view's options, not here.
+struct Group {
+    std::string id;  // global
+    std::string title;
+    std::optional<std::string> icon, description;
+    bool defaultVisible = true;
+    bool toggleable = true;
+    int order = 0;
+    json legend;  // null or [{label, color? | image?}]
     json toJson() const;
 };
 
@@ -70,12 +86,20 @@ struct Session {
     int priority = 0;      // host-assigned; lower draws first (M6.10)
     std::map<std::string, Source> sources;
     std::map<std::string, Image> images;
+    std::map<std::string, Group> groups;
     std::vector<Layer> layers;  // insertion order = batch order (M6.10)
 
     Layer* findLayer(const std::string& id);
     const Layer* findLayer(const std::string& id) const;
+    const Group* findGroup(const std::string& id) const;
     json toJson() const;
 };
+
+// Geographic extent [[w,s],[e,n]] of every coordinate in the session's
+// GeoJSON sources (or one source), for fitSession (M7.4a). nullopt when
+// there is no geometry.
+struct Extent { double w, s, e, n; };
+std::optional<Extent> sessionExtent(const Session& s, const std::optional<std::string>& sourceGlobalId = std::nullopt);
 
 struct Scene {
     std::map<std::string, Session> sessions;

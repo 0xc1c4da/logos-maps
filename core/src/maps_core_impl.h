@@ -70,6 +70,21 @@ public:
     /// Clear one feature's state, or every feature's when featureId is absent.
     bool clearFeatureState(const std::string& session, const std::string& sourceId, const std::optional<std::string>& featureId);
 
+    // ── groups and callouts (M6.3a/b, §8.4) ──────────────────────────────
+
+    /// Every group in the scene (or one session's), in `order`: {"groups":
+    /// [{session, id, title, icon?, description?, defaultVisible, toggleable,
+    /// order, legend?, layers[]}]}. Groups are published with putGroup.
+    std::string listGroups(const std::optional<std::string>& session);
+    /// Show or hide a group in one view ("" = every open view). Edits the
+    /// view's `hiddenGroups` option and emits groupVisibilityChanged. false
+    /// when the group or view is unknown.
+    bool setGroupVisible(const std::string& viewId, const std::string& session, const std::string& groupId, bool visible);
+    /// Replace the content of the callout a view is showing ("" = every
+    /// view): {title, subtitle?, icon?, actions?} (M8.19). Relayed as
+    /// calloutContentChanged. false when malformed or no such view.
+    bool setCalloutContent(const std::string& viewId, const std::string& contentJson);
+
     // ── basemaps ─────────────────────────────────────────────────────────
 
     /// Catalogue entries matching `filterJson` ({} for all) -> {"basemaps":[…]}.
@@ -94,9 +109,13 @@ public:
     /// camera, basemap, size, dpr, gestureState as last reported by the view.
     StdLogosResult getViewState(const std::string& viewId);
     /// Relay a camera intent (jumpTo|easeTo|flyTo|fitBounds|fitCoordinates|
-    /// cancel) to the view as cameraIntent. Validated here; applied there.
+    /// fitSession|cancel) to the view as cameraIntent. Validated here;
+    /// applied there. fitSession (M7.4a) is resolved here from the session's
+    /// published geometry into fitBounds (or easeTo for a single point).
+    /// `keepFollow: true` leaves the view's follow mode alone (M7.4b).
     StdLogosResult camera(const std::string& viewId, const std::string& intentJson);
-    /// Relay view options (padding, constraints, gestures §8.2, pick priority).
+    /// Relay view options (padding, constraints, gestures §8.2, pick
+    /// priority, chrome/theme/follow §8.4, hiddenGroups/hiddenDetails).
     StdLogosResult setViewOptions(const std::string& viewId, const std::string& optionsJson);
     /// [[lon,lat],…] -> [[x,y],…] from the view's last camera (Web Mercator,
     /// pitch ignored).
@@ -124,7 +143,8 @@ public:
     bool reportViewState(const std::string& viewId, const std::string& stateJson);
     /// A view-originated event (frameRendered, cameraChanged, cameraIdle,
     /// gestureBegan/Ended, featurePicked, trackedMoved, basemapLoading/
-    /// Loaded/Failed, snapshotReady, providerRequest, attributionChanged).
+    /// Loaded/Failed, snapshotReady, providerRequest, attributionChanged,
+    /// calloutOpened/Action/Closed, pinDropped/Cleared, followChanged).
     /// Re-emitted on the bus with viewId stamped in.
     bool reportViewEvent(const std::string& viewId, const std::string& topic, const std::string& payloadJson);
 
@@ -179,6 +199,10 @@ logos_events:
     void viewEvent(const std::string& json);
     /// {id, action: "added"|"removed"}
     void catalogueChanged(const std::string& json);
+    /// {viewId, session, groupId, visible} -- M6.3a, from setGroupVisible.
+    void groupVisibilityChanged(const std::string& json);
+    /// {viewId, content} -- M8.19, from setCalloutContent ("" viewId = all).
+    void calloutContentChanged(const std::string& json);
 
 protected:
     void onContextReady() override;
