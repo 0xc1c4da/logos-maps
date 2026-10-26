@@ -55,6 +55,28 @@ add_library(maps_view_lib STATIC
     ${VIEW_SRC}/view/selection_overlay.cpp
 )
 target_include_directories(maps_view_lib PUBLIC ${VIEW_SRC})
+
+# <logos/view_surface.h> (RFC-8): the header-only module API ViewWindow asks
+# for the host's window. The plugin build gets it from logos-module-builder
+# (metadata.json view_surface: true); this standalone build takes it from
+# -DLOGOS_VIEW_SURFACE_INCLUDE_DIR (nix/view-tests.nix passes the builder's
+# pinned logos-view-module-runtime) or, by hand, from a workspace sibling.
+# Here no runtime publishes the table, so every call returns nullptr/"none"
+# and ViewWindow opens its own window — exactly what the suites expect.
+set(LOGOS_VIEW_SURFACE_INCLUDE_DIR "" CACHE PATH "Directory holding logos/view_surface.h (logos-view-module-runtime/include)")
+if(NOT LOGOS_VIEW_SURFACE_INCLUDE_DIR AND DEFINED ENV{LOGOS_VIEW_SURFACE_INCLUDE_DIR})
+    set(LOGOS_VIEW_SURFACE_INCLUDE_DIR "$ENV{LOGOS_VIEW_SURFACE_INCLUDE_DIR}")
+endif()
+if(NOT LOGOS_VIEW_SURFACE_INCLUDE_DIR)
+    get_filename_component(_sibling "${CMAKE_CURRENT_SOURCE_DIR}/../../../logos-view-module-runtime/include" ABSOLUTE)
+    if(EXISTS "${_sibling}/logos/view_surface.h")
+        set(LOGOS_VIEW_SURFACE_INCLUDE_DIR "${_sibling}")
+    endif()
+endif()
+if(NOT EXISTS "${LOGOS_VIEW_SURFACE_INCLUDE_DIR}/logos/view_surface.h")
+    message(FATAL_ERROR "logos/view_surface.h not found: set -DLOGOS_VIEW_SURFACE_INCLUDE_DIR=<logos-view-module-runtime>/include")
+endif()
+target_include_directories(maps_view_lib PUBLIC ${LOGOS_VIEW_SURFACE_INCLUDE_DIR})
 target_link_libraries(maps_view_lib PUBLIC
     QMapLibre::Core QMapLibre::QuickPrivate
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::OpenGL Qt6::Network

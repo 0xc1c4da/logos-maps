@@ -11,7 +11,10 @@
 namespace maps::view {
 
 struct CapabilityInputs {
-    QString transport = QStringLiteral("none");  // wayland-dmabuf | wayland-shm | inproc | none
+    // What LogosViewSurface::transport() reports (RFC-8): "wayland" (the
+    // shm/dmabuf kind is the host's to observe), "channel-shm",
+    // "channel-d3d11", "channel-iosurface", "inprocess" or "none".
+    QString transport = QStringLiteral("none");
     QStringList providerSchemes;
     bool providerRangeRequests = true;
     bool customLayers = true;   // QMapLibre::Map::addCustomLayer exists in the binding

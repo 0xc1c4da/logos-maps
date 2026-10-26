@@ -32,6 +32,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QQuickWindow>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 

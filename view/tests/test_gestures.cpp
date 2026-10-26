@@ -753,16 +753,17 @@ int main(int argc, char** argv)
         MockCamera cam;
         GestureController gc;
         gc.setCamera(&cam);
-        ViewWindow window;
-        window.setGestureController(&gc);
-        window.resize(640, 480);
-        window.setContextObject(QStringLiteral("view"), nullptr);
-        MapItem* item = window.load(qEnvironmentVariable("MAPS_VIEW_QML_DIR"));
+        ViewWindow vw;  // no host window here: its own top-level (RFC-8 fallback)
+        QQuickWindow& window = *vw.window();
+        vw.setGestureController(&gc);
+        vw.resize(640, 480);
+        vw.setContextObject(QStringLiteral("view"), nullptr);
+        MapItem* item = vw.load(qEnvironmentVariable("MAPS_VIEW_QML_DIR"));
         REQUIRE(item != nullptr);
-        CHECK(!window.usedFallback());
-        window.show();
+        CHECK(!vw.usedFallback());
+        vw.show();
         WAIT_FOR(window.isExposed());
-        QQuickItem* root = window.rootObject();
+        QQuickItem* root = vw.rootObject();
         REQUIRE(root != nullptr);
         CHECK(root->findChild<QObject*>(QStringLiteral("touchArea")) != nullptr);
         CHECK(root->findChild<QObject*>(QStringLiteral("pointerDrag")) != nullptr);

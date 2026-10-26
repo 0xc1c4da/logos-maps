@@ -45,7 +45,14 @@ void MapsViewBackend::start()
     options.moduleName = QStringLiteral("maps_view");
     if (!m_pendingSession.isEmpty()) options.session = m_pendingSession;
     options.moduleDir = maps::view::ViewWindow::pluginDirectory();
-    options.surfaceTransport = maps::view::ViewController::surfaceTokenFromProcess().isEmpty() ? QStringLiteral("none") : QStringLiteral("wayland-shm");
+    // RFC-8: the runtime names the transport ("wayland", "channel-shm", ...).
+    // A ui-host that predates the API publishes nothing; if it still handed
+    // us a surface token the window it composites is a Wayland one.
+    {
+        const QString reported = maps::view::ViewWindow::hostTransport();
+        if (reported != QLatin1String("none")) options.surfaceTransport = reported;
+        else if (!maps::view::ViewController::surfaceTokenFromProcess().isEmpty()) options.surfaceTransport = QStringLiteral("wayland");
+    }
     m_controller = std::make_unique<maps::view::ViewController>(m_core.get(), options, this);
 
     auto* c = m_controller.get();

@@ -87,6 +87,23 @@ void ViewController::start()
     if (m_window) return;
     installProviders();
 
+    // The engine draws into a GL texture (M11.2): the scene graph has to run
+    // on the OpenGL RHI backend. Only effective before the first QQuickWindow
+    // exists — which is why it comes BEFORE the first LogosViewSurface::window()
+    // call below (RFC-8 §2: the runtime creates its window lazily, on that
+    // call). A host that already picked another API gets the MapItem warning
+    // and an empty item instead.
+    if (QQuickWindow::graphicsApi() != QSGRendererInterface::OpenGL) {
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    }
+
+    // RFC-8: render into the window the runtime presents to the host over
+    // its SurfaceTransport; without one (dev launcher, tests, a ui-host that
+    // predates the API) open our own top-level. The transport the runtime
+    // reports is what capabilities.surface.transport carries.
+    QQuickWindow* hostWindow = ViewWindow::hostWindow();
+    if (hostWindow) m_options.surfaceTransport = ViewWindow::hostTransport();
+
     CapabilityInputs inputs;
     inputs.transport = m_options.surfaceTransport;
     inputs.providerSchemes = ProviderRegistry::instance().schemes();
@@ -94,15 +111,7 @@ void ViewController::start()
     m_capabilities = maps::view::capabilities(inputs);
     emit capabilitiesChanged(compact(m_capabilities));
 
-    // The engine draws into a GL texture (M11.2): the scene graph has to run
-    // on the OpenGL RHI backend. Only effective before the first QQuickWindow
-    // exists; a host that already picked another API gets the MapItem
-    // warning and an empty item instead.
-    if (QQuickWindow::graphicsApi() != QSGRendererInterface::OpenGL) {
-        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
-    }
-
-    m_window = std::make_unique<ViewWindow>();
+    m_window = std::make_unique<ViewWindow>(hostWindow);
     m_window->setTitle(QStringLiteral("Logos Maps"));
     m_window->resize(m_options.initialSize);
     // The gesture controller is what MapWindow.qml's handler stacks talk
@@ -159,7 +168,7 @@ void ViewController::start()
         connect(m_mapItem, &MapItem::mapCreated, this, attach, Qt::SingleShotConnection);
         if (!m_options.showWindow) m_mapItem->createMapNow(m_options.initialSize, 1.0);
     }
-    if (m_options.showWindow) m_window->show();
+    if (m_options.showWindow) m_window->show();  // own window only; the host shows its own
 }
 
 void ViewController::attachInput(QMapLibre::Map* map)
@@ -634,6 +643,9 @@ void ViewController::setSize(int width, int height, double devicePixelRatio)
 {
     Q_UNUSED(devicePixelRatio);  // the window's screen decides; recorded in view state
     if (!m_window || width <= 0 || height <= 0) return;
+    // A host window is sized by the host through the transport (RFC-5);
+    // ViewWindow::resize is a no-op there and this slot only matters for
+    // the dev launcher's own window.
     m_window->resize(width, height);
 }
 

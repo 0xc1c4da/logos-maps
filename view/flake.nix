@@ -65,6 +65,10 @@
           pkgs = import nixpkgs { inherit system; };
           engine = maps-engine.packages.${system}.default;
           src = self;
+          # The header-only RFC-8 module API, read from the runtime the
+          # builder pins (the plugin build gets the same file through
+          # metadata.json view_surface: true). No runtime package is built.
+          viewSurfaceInclude = "${logos-module-builder.inputs.logos-view-module-runtime}/include";
         };
     in
       base // {

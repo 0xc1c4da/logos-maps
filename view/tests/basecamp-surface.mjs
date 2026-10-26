@@ -2,18 +2,39 @@
 // Maps in Basecamp: the view's surface arrives through Logos.Surface
 // (docs/architecture.md section 16.6 as realised on the platform, RFC-3..5).
 //
-// The maps_view backend runs in its own ui-host --gui process as a client of
-// Basecamp's nested compositor; this test looks at the host side only: the
-// Surface item in Main.qml binds, reports a Wayland transport, carries the
-// view id the backend registered with maps_core, and the tab shows frames.
+// The maps_view backend runs in its own ui-host --gui process and reaches
+// Basecamp over a SurfaceTransport (RFC-6): by default — on every platform,
+// RFC-6 rev 2.1 — over the channel transport's shared-memory ring (RFC-7),
+// or, when the host is started with LOGOS_SURFACE_TRANSPORT=wayland, as a
+// client of Basecamp's nested compositor (RFC-4). This test looks at the host
+// side only: the Surface
+// item in Main.qml binds, reports the transport the host was asked for,
+// carries the view id the backend registered with maps_core, and the tab
+// shows frames.
 //
 // Usage:
-//   nix run .#ui-tests                    # Basecamp dev --test (offscreen host)
+//   nix run .#ui-tests                    # Basecamp dev --test (offscreen host), channel-shm
+//   LOGOS_SURFACE_TRANSPORT=wayland nix run .#ui-tests   # same over the nested compositor
 //   node tests/basecamp-surface.mjs       # against a running Basecamp with the
 //                                         # inspector on QML_INSPECTOR_PORT
 // Environment:
-//   LOGOS_QT_MCP        logos-qt-mcp checkout or package (framework.mjs)
-//   MAPS_SURFACE_SHOT   write a PNG of the Basecamp window here when set
+//   LOGOS_QT_MCP            logos-qt-mcp checkout or package (framework.mjs)
+//   LOGOS_SURFACE_TRANSPORT what the host was started with; decides which
+//                           transport family is expected (channel by default)
+//   MAPS_SURFACE_SHOT       write a PNG of the Basecamp window here when set
+//
+// What the headless run proves differs by transport. Under `dev --test`
+// Basecamp runs on the offscreen platform and exports QT_QPA_PLATFORM=
+// offscreen to its children. The Wayland child overrides that (it is a
+// client of the nested compositor) and renders the map with OpenGL. The
+// channel child inherits it: Qt Quick then uses the software scene graph,
+// MapItem has no GL context and draws nothing, and an offscreen host that
+// never paints also leaves the ring's first frames in place (RFC-7 §5
+// credits). The default (channel) run therefore checks binding, transport
+// name and size;
+// the frame content was verified against a live Basecamp on a Wayland
+// desktop (docs/architecture.md section 16.6), which is also what
+// `node tests/basecamp-surface.mjs` against a running Basecamp shows.
 //
 // Self-contained on purpose: the module builder copies each tests/*.mjs into
 // the store alone.
@@ -52,8 +73,12 @@ test("maps: Logos.Surface binds the backend's surface", async (app) => {
   await waitProp(app, "maps.surface", "ready", (v) => v === true, { timeout: 120000 });
 
   const p = await props(app, await find(app, "maps.surface"));
-  if (!/^wayland-(shm|dmabuf)$/.test(p.transport))
-    throw new Error(`transport should be a Wayland one, got ${JSON.stringify(p.transport)}`);
+  const asked = process.env.LOGOS_SURFACE_TRANSPORT || "";
+  const expected = asked === "wayland"
+    ? { re: /^wayland-(shm|dmabuf)$/, name: "a Wayland one" }
+    : { re: /^channel-(shm|d3d11|iosurface)$/, name: "a channel one" };
+  if (!expected.re.test(p.transport))
+    throw new Error(`transport should be ${expected.name} (LOGOS_SURFACE_TRANSPORT=${JSON.stringify(asked)}), got ${JSON.stringify(p.transport)}`);
   if (!String(p.viewId).startsWith("maps_view/basecamp/main/"))
     throw new Error(`viewId should be maps_view/basecamp/main/<n>, got ${JSON.stringify(p.viewId)}`);
   if (!(p.width > 0 && p.height > 0))

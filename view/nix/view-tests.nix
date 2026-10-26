@@ -18,7 +18,7 @@
 #   nix build .#view-tests        # builds and runs the suites (checkPhase)
 #   nix build .#dev               # the launcher without running the suites
 #   nix flake check               # same as the first, as checks.unit-tests
-{ pkgs, engine, src }:
+{ pkgs, engine, src, viewSurfaceInclude }:
 
 let
   inherit (pkgs) lib stdenv;
@@ -70,6 +70,8 @@ let
 
     cmakeFlags = [
       "-DMAPS_VIEW_PMTILES_INCLUDE=${pmtilesInclude}"
+      # <logos/view_surface.h> (RFC-8), from the builder's pinned runtime SOURCE.
+      "-DLOGOS_VIEW_SURFACE_INCLUDE_DIR=${viewSurfaceInclude}"
       "-DMAPS_VIEW_BUILD_DEV=ON"
       "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
     ];
