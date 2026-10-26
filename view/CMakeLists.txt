@@ -66,6 +66,8 @@ set(MAPS_VIEW_SOURCES
     src/view/builtins.cpp
     src/view/selection_overlay.h
     src/view/selection_overlay.cpp
+    src/view/chrome_controller.h
+    src/view/chrome_controller.cpp
 )
 
 logos_module(

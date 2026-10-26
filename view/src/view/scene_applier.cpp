@@ -63,6 +63,9 @@ std::vector<SceneApplier::LayerInfo> SceneApplier::layerInfos() const
         info.source = it->second.source;
         info.sourceLayer = it->second.params.value(QStringLiteral("source-layer")).toString();
         info.type = it->second.params.value(QStringLiteral("type")).toString();
+        info.group = it->second.group;
+        info.callout = it->second.callout;
+        info.selectable = it->second.selectable;
         out.push_back(std::move(info));
     };
     for (const QString& id : m_order) push(id);
@@ -70,6 +73,110 @@ std::vector<SceneApplier::LayerInfo> SceneApplier::layerInfos() const
         if (!m_order.contains(id)) push(id);
     }
     return out;
+}
+
+std::optional<SceneApplier::LayerInfo> SceneApplier::layerInfo(const QString& id) const
+{
+    for (const LayerInfo& l : layerInfos())
+        if (l.id == id) return l;
+    return std::nullopt;
+}
+
+// ── groups and per-view visibility ───────────────────────────────────────
+
+QJsonArray SceneApplier::groups() const
+{
+    QJsonArray out;
+    for (const auto& [gid, g] : m_groups) {
+        QJsonObject entry = g;
+        QJsonArray layers;
+        for (const QString& id : m_order)
+            if (m_layers.count(id) && m_layers.at(id).group == gid) layers.append(id);
+        for (const auto& [id, l] : m_layers)
+            if (l.group == gid && !m_order.contains(id)) layers.append(id);
+        entry.insert(QStringLiteral("layers"), layers);
+        out.append(entry);
+    }
+    return out;
+}
+
+bool SceneApplier::layerVisible(const QString& id) const
+{
+    auto it = m_layers.find(id);
+    if (it == m_layers.end()) return false;
+    if (!it->second.group.isEmpty() && m_hiddenGroups.contains(it->second.group)) return false;
+    return it->second.params.value(QStringLiteral("layout")).toObject().value(QStringLiteral("visibility")).toString() != QLatin1String("none");
+}
+
+QVariantMap SceneApplier::layerParams(const QString& id, const LayerDef& def) const
+{
+    Q_UNUSED(id);
+    QJsonObject params = def.params;
+    if (!def.group.isEmpty() && m_hiddenGroups.contains(def.group)) {
+        QJsonObject layout = params.value(QStringLiteral("layout")).toObject();
+        layout.insert(QStringLiteral("visibility"), QStringLiteral("none"));
+        params.insert(QStringLiteral("layout"), layout);
+    }
+    return params.toVariantMap();
+}
+
+void SceneApplier::setHiddenGroups(const QStringList& groupIds)
+{
+    if (m_hiddenGroups == groupIds) return;
+    m_hiddenGroups = groupIds;
+    applyGroupVisibility();
+}
+
+void SceneApplier::applyGroupVisibility()
+{
+    if (!m_map) return;
+    for (const auto& [id, l] : m_layers) {
+        if (l.group.isEmpty() || !m_map->layerExists(id)) continue;
+        const bool hidden = m_hiddenGroups.contains(l.group);
+        const QString own = l.params.value(QStringLiteral("layout")).toObject().value(QStringLiteral("visibility")).toString(QStringLiteral("visible"));
+        m_map->setLayoutProperty(id, QStringLiteral("visibility"), hidden ? QStringLiteral("none") : own);
+    }
+}
+
+void SceneApplier::setBasemapDetails(const QJsonArray& details)
+{
+    m_basemapDetails = details;
+    applyDetailVisibility();
+}
+
+void SceneApplier::setHiddenDetails(const QStringList& hidden, const QStringList& shown)
+{
+    if (m_hiddenDetails == hidden && m_shownDetails == shown) return;
+    m_hiddenDetails = hidden;
+    m_shownDetails = shown;
+    applyDetailVisibility();
+}
+
+bool SceneApplier::detailVisible(const QJsonObject& detail) const
+{
+    const QString id = detail.value(QStringLiteral("id")).toString();
+    if (m_hiddenDetails.contains(id)) return false;
+    if (m_shownDetails.contains(id)) return true;
+    return detail.value(QStringLiteral("defaultVisible")).toBool(true);
+}
+
+void SceneApplier::applyDetailVisibility()
+{
+    // M9.1a: style layers (never scene layers) matched by id prefix.
+    if (!m_map || m_blocked) return;
+    const QVector<QString> ids = m_map->layerIds();
+    for (const QJsonValue& v : m_basemapDetails) {
+        const QJsonObject d = v.toObject();
+        const bool hidden = !detailVisible(d);
+        for (const QJsonValue& p : d.value(QStringLiteral("layerPrefixes")).toArray()) {
+            const QString prefix = p.toString();
+            if (prefix.isEmpty()) continue;
+            for (const QString& id : ids) {
+                if (!id.startsWith(prefix) || m_layers.count(id)) continue;
+                m_map->setLayoutProperty(id, QStringLiteral("visibility"), hidden ? QStringLiteral("none") : QStringLiteral("visible"));
+            }
+        }
+    }
 }
 
 QStringList SceneApplier::knownLayers() const
@@ -91,6 +198,7 @@ void SceneApplier::onStyleWillLoad()
 void SceneApplier::onStyleLoaded()
 {
     m_blocked = false;
+    applyDetailVisibility();  // M9.1a: before the scene replays
     replay();
 }
 
@@ -189,14 +297,23 @@ void SceneApplier::applyScene(const QJsonObject& scene)
         for (const auto& [id, s] : m_sources) if (m_map->sourceExists(id)) m_map->removeSource(id);
         for (const auto& [id, img] : m_images) m_map->removeImage(id);
     }
+    QStringList gone;
+    for (const auto& [id, l] : m_layers) gone << id;
     m_sources.clear();
     m_layers.clear();
     m_images.clear();
+    m_groups.clear();
 
-    // M6.5 order: sources, data, images, then layers (ordered by the core).
+    // M6.5 order: sources, data, images, groups, then layers (ordered by the core).
     const QJsonObject sessions = scene.value(QStringLiteral("sessions")).toObject();
     for (auto s = sessions.begin(); s != sessions.end(); ++s) {
         const QJsonObject session = s.value().toObject();
+        const QJsonObject groups = session.value(QStringLiteral("groups")).toObject();
+        for (auto it = groups.begin(); it != groups.end(); ++it) {
+            QJsonObject g = it.value().toObject();
+            g.insert(QStringLiteral("session"), s.key());
+            m_groups[it.key()] = g;
+        }
         const QJsonObject sources = session.value(QStringLiteral("sources")).toObject();
         for (auto it = sources.begin(); it != sources.end(); ++it) {
             QJsonObject op = it.value().toObject();
@@ -213,6 +330,11 @@ void SceneApplier::applyScene(const QJsonObject& scene)
         const QJsonArray layers = s.value().toObject().value(QStringLiteral("layers")).toArray();
         for (const QJsonValue& l : layers) putLayer(l.toObject());
     }
+    QStringList removed;
+    for (const QString& id : gone)
+        if (!m_layers.count(id)) removed << id;
+    if (!removed.isEmpty()) emit layersRemoved(removed);
+    emit groupsChanged();
     m_layersDirty = true;
     reconcileLayers([this, revision] { finishRevision(revision); });
 }
@@ -228,7 +350,19 @@ void SceneApplier::applyChanges(const QJsonObject& changes)
     const quint64 to = static_cast<quint64>(changes.value(QStringLiteral("to")).toDouble());
     const QJsonArray ops = changes.value(QStringLiteral("ops")).toArray();
     if (trace()) qDebug("maps_view: applier changes to=%llu ops=%d full=%d", static_cast<unsigned long long>(to), ops.size(), changes.value(QStringLiteral("full")).toBool());
+    const auto groupsBefore = m_groups;
+    QStringList before;
+    for (const auto& [id, l] : m_layers) before << id;
     for (const QJsonValue& v : ops) applyOp(v.toObject());
+    QStringList removed;
+    for (const QString& id : before)
+        if (!m_layers.count(id)) removed << id;
+    if (!removed.isEmpty()) emit layersRemoved(removed);
+    bool groupsDirty = groupsBefore.size() != m_groups.size();
+    if (!groupsDirty)
+        for (const auto& [gid, g] : m_groups)
+            if (!groupsBefore.count(gid) || groupsBefore.at(gid) != g) { groupsDirty = true; break; }
+    if (groupsDirty || m_layersDirty) emit groupsChanged();
     if (m_layersDirty) {
         reconcileLayers([this, to] { finishRevision(to); });
     } else {
@@ -271,6 +405,19 @@ void SceneApplier::applyOp(const QJsonObject& op)
         putImage(op);
     } else if (kind == QLatin1String("putLayer")) {
         putLayer(op);
+    } else if (kind == QLatin1String("putGroup")) {
+        QJsonObject g = op;
+        g.remove(QStringLiteral("op"));
+        if (!g.contains(QStringLiteral("session"))) {
+            const int colon = id.indexOf(QLatin1Char(':'));
+            if (colon > 0) g.insert(QStringLiteral("session"), id.left(colon));
+        }
+        m_groups[id] = g;
+    } else if (kind == QLatin1String("removeGroup")) {
+        m_groups.erase(id);
+        for (auto& [lid, l] : m_layers)
+            if (l.group == id) l.group.clear();
+        applyGroupVisibility();
     } else {
         emit sceneError(QStringLiteral("maps.badArgument"), QStringLiteral("unknown op '%1'").arg(kind));
     }
@@ -394,6 +541,9 @@ void SceneApplier::putLayer(const QJsonObject& op)
     params.insert(QStringLiteral("layout"), op.value(QStringLiteral("layout")).toObject());
     params.insert(QStringLiteral("paint"), op.value(QStringLiteral("paint")).toObject());
     def.params = params;
+    def.group = op.value(QStringLiteral("group")).toString();
+    def.callout = op.value(QStringLiteral("callout")).toObject();
+    def.selectable = op.value(QStringLiteral("selectable")).toBool(false);
     m_layers[id] = std::move(def);
     m_layersDirty = true;
 }
@@ -425,7 +575,7 @@ void SceneApplier::insertLayers(const QJsonArray& resolved)
         const QString before = r.value(QStringLiteral("before")).toString();
         // Inserting each layer before the same anchor, bottom-to-top, yields
         // the resolved order; an empty `before` appends (top).
-        m_map->addLayer(id, it->second.params.toVariantMap(),
+        m_map->addLayer(id, layerParams(id, it->second),
                         (!before.isEmpty() && m_map->layerExists(before)) ? before : QString());
         if (trace()) qDebug("maps_view: applier addLayer %s before=%s exists=%d", qPrintable(id), qPrintable(before), m_map->layerExists(id));
         m_order << id;

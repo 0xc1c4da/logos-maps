@@ -34,6 +34,8 @@ public:
     void patchStyle(const QString& id, const QString& styleJson, CoreCallback cb) override;
     void listBasemaps(const QString& filterJson, CoreCallback cb) override;
     void setBasemap(const QString& viewId, const QString& id, CoreCallback cb) override;
+    void setGroupVisible(const QString& viewId, const QString& session, const QString& groupId, bool visible, CoreCallback cb) override;
+    void setFeatureState(const QString& session, const QString& sourceId, const QString& featureId, const QString& stateJson, CoreCallback cb) override;
     void listProviders(CoreCallback cb) override;
     void getResource(const QString& module, const QString& path, qint64 rangeStart, qint64 rangeEnd,
                      std::function<void(bool, const QByteArray&, const QString&, const QString&)> cb) override;

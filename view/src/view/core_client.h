@@ -51,6 +51,13 @@ public:
     virtual void listBasemaps(const QString& filterJson, CoreCallback cb) = 0;
     virtual void setBasemap(const QString& viewId, const QString& id, CoreCallback cb) = 0;
 
+    // chrome (section 8.4): the panel and callouts act through the core so
+    // domain modules observe them (M8.20, M8.19).
+    virtual void setGroupVisible(const QString& viewId, const QString& session, const QString& groupId, bool visible, CoreCallback cb) = 0;
+    /// The view only ever writes the reserved keys `hover` / `selected`
+    /// (M8.15a), merging {key: true|false}; it never clears domain state.
+    virtual void setFeatureState(const QString& session, const QString& sourceId, const QString& featureId, const QString& stateJson, CoreCallback cb) = 0;
+
     // providers
     virtual void listProviders(CoreCallback cb) = 0;
     /// tileProvider contract on another module (section 12.5). Only the SDK
@@ -61,7 +68,8 @@ public:
     /// Core-originated events the view acts on (section 12.4 / impl header):
     /// revisionPublished, basemapChanged, cameraIntent, viewOptionsChanged,
     /// trackRequested, snapshotRequested, featureStateChanged,
-    /// cacheClearRequested, catalogueChanged. Subscribed by the implementation.
+    /// cacheClearRequested, catalogueChanged, groupVisibilityChanged,
+    /// calloutContentChanged. Subscribed by the implementation.
 signals:
     void coreEvent(const QString& topic, const QJsonObject& payload);
     /// The implementation lost or regained its link to the core.

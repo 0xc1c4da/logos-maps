@@ -27,6 +27,8 @@ public:
     /// path, M9.4); when empty the descriptor carries `style_url`.
     void addBasemap(const QString& id, const QJsonObject& style, const QString& styleUrl = QString());
     void setDefaultBasemap(const QString& id) { m_defaultBasemap = id; }
+    /// Merge extra descriptor keys (thumbnail, details, ...) into a registered basemap.
+    void setDescriptorExtras(const QString& id, const QJsonObject& extras);
     /// Append ops to the log as one revision and emit revisionPublished.
     quint64 publish(const QJsonArray& ops, bool emitEvent = true);
     /// Emit any core event.
@@ -69,7 +71,15 @@ public:
     void patchStyle(const QString& id, const QString& styleJson, maps::view::CoreCallback cb) override;
     void listBasemaps(const QString& filterJson, maps::view::CoreCallback cb) override;
     void setBasemap(const QString& viewId, const QString& id, maps::view::CoreCallback cb) override;
+    void setGroupVisible(const QString& viewId, const QString& session, const QString& groupId, bool visible, maps::view::CoreCallback cb) override;
+    void setFeatureState(const QString& session, const QString& sourceId, const QString& featureId, const QString& stateJson, maps::view::CoreCallback cb) override;
     void listProviders(maps::view::CoreCallback cb) override;
+
+    struct GroupCall { QString viewId, session, groupId; bool visible; };
+    std::vector<GroupCall> groupCalls;
+    struct FeatureStateCall { QString session, sourceId, featureId; QJsonObject state; };
+    std::vector<FeatureStateCall> featureStates;
+    QStringList hiddenGroups(const QString& viewId) const { auto it = m_hiddenGroups.find(viewId); return it == m_hiddenGroups.end() ? QStringList() : it->second; }
     void getResource(const QString& module, const QString& path, qint64 rangeStart, qint64 rangeEnd,
                      std::function<void(bool, const QByteArray&, const QString&, const QString&)> cb) override;
 
@@ -85,9 +95,12 @@ private:
     struct Session {
         QJsonObject sources;
         QJsonObject images;
+        QJsonObject groups;
         QJsonArray layers;
     };
     std::map<QString, Session> m_sessions;
+    std::map<QString, QStringList> m_hiddenGroups;   // viewId -> hidden global group ids
+    std::map<QString, QJsonObject> m_featureState;   // "<sourceId>#<featureId>" -> state
     std::vector<std::pair<quint64, QJsonArray>> m_log;  // revision, ops
     quint64 m_revision = 0;
     QStringList m_layerOrder;

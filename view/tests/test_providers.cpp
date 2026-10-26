@@ -405,6 +405,8 @@ int main(int argc, char** argv)
         CHECK(stale->hits == 1);
         Captured again = fetch(*loader, mbgl::Resource::style("stale://thing"));
         CHECK(dataOf(again) == "stale:stale://thing" || again.response.notModified);
+        // The cached copy is delivered first; the revalidation hit follows asynchronously.
+        waitFor([&] { return stale->hits == 2; }, 10000);
         CHECK_MSG(stale->hits == 2, QStringLiteral("stale hits: %1").arg(stale->hits));
 
         // PMTiles v3 fixture via pmtiles://

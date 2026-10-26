@@ -31,6 +31,15 @@ void FakeCoreClient::addBasemap(const QString& id, const QJsonObject& style, con
     if (m_defaultBasemap.isEmpty()) m_defaultBasemap = id;
 }
 
+void FakeCoreClient::setDescriptorExtras(const QString& id, const QJsonObject& extras)
+{
+    auto it = m_basemaps.find(id);
+    if (it == m_basemaps.end()) return;
+    QJsonObject descriptor = it->second.value(QStringLiteral("descriptor")).toObject();
+    for (auto e = extras.begin(); e != extras.end(); ++e) descriptor.insert(e.key(), e.value());
+    it->second.insert(QStringLiteral("descriptor"), descriptor);
+}
+
 quint64 FakeCoreClient::publish(const QJsonArray& ops, bool emitEvent)
 {
     ++m_revision;
@@ -100,6 +109,12 @@ void FakeCoreClient::applyOpToScene(const QJsonObject& op)
         for (const QJsonValue& l : s.layers) if (l.toObject().value(QStringLiteral("id")).toString() != id) layers.append(l);
         s.layers = layers;
         m_layerOrder.removeAll(id);
+    } else if (kind == QLatin1String("putGroup")) {
+        QJsonObject g = op;
+        g.remove(QStringLiteral("op"));
+        m_sessions[sessionOf(id)].groups.insert(id, g);
+    } else if (kind == QLatin1String("removeGroup")) {
+        m_sessions[sessionOf(id)].groups.remove(id);
     }
 }
 
@@ -107,7 +122,8 @@ QJsonObject FakeCoreClient::scene() const
 {
     QJsonObject sessions;
     for (const auto& [name, s] : m_sessions) {
-        sessions.insert(name, QJsonObject{{QStringLiteral("sources"), s.sources}, {QStringLiteral("images"), s.images}, {QStringLiteral("layers"), s.layers}});
+        sessions.insert(name, QJsonObject{{QStringLiteral("sources"), s.sources}, {QStringLiteral("images"), s.images},
+                                          {QStringLiteral("groups"), s.groups}, {QStringLiteral("layers"), s.layers}});
     }
     return QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("revision"), static_cast<double>(m_revision)}, {QStringLiteral("sessions"), sessions}};
 }
@@ -262,6 +278,36 @@ void FakeCoreClient::setBasemap(const QString& viewId, const QString& id, CoreCa
 {
     m_viewBasemap[viewId] = id;
     reply(QStringLiteral("setBasemap"), std::move(cb), true, QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("viewId"), viewId}, {QStringLiteral("id"), id}});
+}
+
+void FakeCoreClient::setGroupVisible(const QString& viewId, const QString& session, const QString& groupId, bool visible, CoreCallback cb)
+{
+    // Mirrors maps_core: edit the view's hiddenGroups option, then relay
+    // viewOptionsChanged and groupVisibilityChanged.
+    const QString gid = groupId.contains(QLatin1Char(':')) ? groupId : session + QLatin1Char(':') + groupId;
+    groupCalls.push_back({viewId, session, gid, visible});
+    QStringList& hidden = m_hiddenGroups[viewId];
+    if (visible) hidden.removeAll(gid);
+    else if (!hidden.contains(gid)) hidden << gid;
+    QJsonArray arr;
+    for (const QString& h : hidden) arr.append(h);
+    emitCoreEvent(QStringLiteral("viewOptionsChanged"),
+                  QJsonObject{{QStringLiteral("viewId"), viewId}, {QStringLiteral("options"), QJsonObject{{QStringLiteral("hiddenGroups"), arr}}}});
+    emitCoreEvent(QStringLiteral("groupVisibilityChanged"),
+                  QJsonObject{{QStringLiteral("viewId"), viewId}, {QStringLiteral("session"), session}, {QStringLiteral("groupId"), gid}, {QStringLiteral("visible"), visible}});
+    reply(QStringLiteral("setGroupVisible"), std::move(cb), true, true);
+}
+
+void FakeCoreClient::setFeatureState(const QString& session, const QString& sourceId, const QString& featureId, const QString& stateJson, CoreCallback cb)
+{
+    const QJsonObject state = QJsonDocument::fromJson(stateJson.toUtf8()).object();
+    featureStates.push_back({session, sourceId, featureId, state});
+    QJsonObject& current = m_featureState[sourceId + QLatin1Char('#') + featureId];
+    for (auto it = state.begin(); it != state.end(); ++it) current.insert(it.key(), it.value());
+    emitCoreEvent(QStringLiteral("featureStateChanged"),
+                  QJsonObject{{QStringLiteral("session"), session}, {QStringLiteral("sourceId"), sourceId},
+                              {QStringLiteral("featureId"), featureId}, {QStringLiteral("state"), current}});
+    reply(QStringLiteral("setFeatureState"), std::move(cb), true, true);
 }
 
 void FakeCoreClient::listProviders(CoreCallback cb)

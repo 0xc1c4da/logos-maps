@@ -142,7 +142,19 @@ QJsonObject capabilities(const CapabilityInputs& in)
     QJsonObject limits{{QStringLiteral("maxImageSize"), 4096},
                        {QStringLiteral("maxBatchBytes"), 4 * 1024 * 1024},
                        {QStringLiteral("maxPickHits"), 64}};
+    // Section 8.4 chrome: the items this view implements, the follow state
+    // machine (M8.18) and the dropped pin (M8.21). Groups and callouts are
+    // rendered from scene metadata (M6.3a/b).
+    scene.insert(QStringLiteral("groups"), true);
+    scene.insert(QStringLiteral("callouts"), true);
+    QJsonObject chrome{{QStringLiteral("items"), QJsonArray{QStringLiteral("scaleBar"), QStringLiteral("compass"), QStringLiteral("attribution"),
+                                                             QStringLiteral("zoomButtons"), QStringLiteral("locateButton"), QStringLiteral("layersButton"),
+                                                             QStringLiteral("callouts"), QStringLiteral("coordinateReadout"), QStringLiteral("statusChip")}},
+                       {QStringLiteral("follow"), true},
+                       {QStringLiteral("pin"), true},
+                       {QStringLiteral("theme"), true}};
     return QJsonObject{{QStringLiteral("v"), 1},
+                       {QStringLiteral("chrome"), chrome},
                        {QStringLiteral("engine"), engine},
                        {QStringLiteral("binding"), binding},
                        {QStringLiteral("patchSet"), QJsonArray::fromStringList(enginePatchSet())},

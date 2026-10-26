@@ -20,4 +20,5 @@ class MapsView
     SIGNAL(featurePicked(QString json))
     SIGNAL(cameraIdle(QString json))
     SIGNAL(attributionChanged(QString html))
+    SIGNAL(shareRequested(QString json))      // {v, kind: copy|share, text}: chrome copy/share, done host-side (section 12.2)
 }

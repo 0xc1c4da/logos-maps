@@ -1,13 +1,15 @@
 import QtQuick
 
-// Scale bar (M6.11): width = distance / metersPerPixel at the padded centre,
+// Scale bar (M8.17): width = distance / metersPerPixel at the padded centre,
 // distance picked from a 1-2-5 series so the bar stays between 60 and 160 px.
+// Metric. Colours from the theme (M8.23): foreground on a background outline.
 Item {
     id: bar
     property real metersPerPixel: 0
     property real maxWidth: 160
     property real distanceMeters: 0
     property string label: ""
+    property var theme: chrome ? chrome.theme : ({})
 
     width: metersPerPixel > 0 ? distanceMeters / metersPerPixel : 0
     height: 18
@@ -32,20 +34,21 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: 4
-        color: "#222"
-        border.color: "#fff"
+        color: bar.theme.foreground
+        border.color: bar.theme.background
         border.width: 1
     }
-    Rectangle { anchors.left: parent.left; anchors.bottom: parent.bottom; width: 2; height: 10; color: "#222" }
-    Rectangle { anchors.right: parent.right; anchors.bottom: parent.bottom; width: 2; height: 10; color: "#222" }
+    Rectangle { anchors.left: parent.left; anchors.bottom: parent.bottom; width: 2; height: 10; color: bar.theme.foreground }
+    Rectangle { anchors.right: parent.right; anchors.bottom: parent.bottom; width: 2; height: 10; color: bar.theme.foreground }
     Text {
         anchors.left: parent.left
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 6
         text: bar.label
-        font.pixelSize: 11
-        color: "#222"
+        font.pixelSize: Math.max(10, (bar.theme.fontPixelSize || 13) - 2)
+        font.family: bar.theme.fontFamily || ""
+        color: bar.theme.foreground
         style: Text.Outline
-        styleColor: "#fff"
+        styleColor: bar.theme.background
     }
 }

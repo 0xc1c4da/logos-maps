@@ -32,6 +32,7 @@ namespace QMapLibre { class Map; }
 namespace maps::view {
 
 class Builtins;
+class ChromeController;
 class SelectionOverlay;
 class GestureController;
 class LogosFileSource;
@@ -93,6 +94,14 @@ public:
     Picker* picker() const { return m_picker.get(); }
     Builtins* builtins() const { return m_builtins.get(); }
     SelectionOverlay* selection() const { return m_selection.get(); }
+    /// The map chrome (section 8.4); exists from construction so options and
+    /// theme can arrive before the window does.
+    ChromeController* chrome() const { return m_chrome.get(); }
+    /// Record options the view itself decided (panel toggles) so they are
+    /// part of the published view state like any setViewOptions value.
+    void recordOptions(const QJsonObject& options);
+    /// Put `text` on the clipboard best-effort and emit shareRequested.
+    void requestShare(const QString& kind, const QString& text);
     /// Tracked coordinates per session (M7.6), as last requested.
     QJsonObject trackedCoordinates() const { return m_tracked; }
 
@@ -117,17 +126,23 @@ signals:
     void cameraIdle(const QString& json);
     void featurePicked(const QString& json);
     void attributionChanged(const QString& html);
+    /// {v, kind: copy|share, text}: the chrome asks the host to put text on
+    /// the clipboard (section 12.2; the view's window may lack focus).
+    void shareRequested(const QString& json);
     void basemapChanged(const QString& id);
     void error(const QString& code, const QString& message);
     void chromeChanged();
 
 private:
+    friend class ChromeController;  // reportEvent / refreshViewState / viewportSize
     void setStatus(const QString& status);
+    void syncPickerLayers();
     void onCoreEvent(const QString& topic, const QJsonObject& payload);
     void onMapChange(int change);
     void openView();
     void loadBasemap(const QString& id);
     void chooseDefaultBasemap();
+    void fetchCatalogue();
     void refreshViewState(bool idle);
     void publishViewState();
     void applyOptions(const QJsonObject& options);
@@ -154,6 +169,7 @@ private:
     std::unique_ptr<Picker> m_picker;
     std::unique_ptr<Builtins> m_builtins;
     std::unique_ptr<SelectionOverlay> m_selection;
+    std::unique_ptr<ChromeController> m_chrome;
     QJsonObject m_tracked;  // session -> [{id, lonLat}]
     double m_metersPerPixel = 0.0;
     QString m_attributionHtml;

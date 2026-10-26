@@ -277,6 +277,27 @@ void GestureController::applyZoomDelta(double delta, const QPointF& anchor)
     m_camera->scaleBy(std::pow(2.0, target - z), anchorFor(anchor));
 }
 
+bool GestureController::canZoomIn() const { return m_camera && m_s.zoomEnabled && m_camera->zoom() < m_s.maxZoom - 1e-3; }
+bool GestureController::canZoomOut() const { return m_camera && m_s.zoomEnabled && m_camera->zoom() > m_s.minZoom + 1e-3; }
+
+bool GestureController::zoomStep(double levels, int durationMs)
+{
+    if (!m_camera || !m_s.zoomEnabled || levels == 0.0) return false;
+    stopInertia();
+    const double z = m_camera->zoom();
+    const double target = std::clamp(z + levels, m_s.minZoom, m_s.maxZoom);
+    if (qFuzzyCompare(target, z)) return false;
+    CameraEase e;
+    e.zoom = target;
+    // Without an anchor the engine zooms about the padded centre (M7.3); a
+    // navigation focal point (M8.10) wins when set.
+    if (hasFocalPoint()) e.anchor = m_s.focalPoint;
+    e.durationMs = std::max(0, durationMs);
+    m_camera->easeTo(e);
+    emit keyboardMoved(QStringLiteral("zoom"));
+    return true;
+}
+
 void GestureController::applyPitchDelta(double delta)
 {
     if (!m_camera || delta == 0.0) return;
@@ -966,29 +987,44 @@ bool GestureController::keyPressed(int key, int modifiers)
     const double panX = size.width() * kKeyboardPanFraction;
     const double panY = size.height() * kKeyboardPanFraction;
     const bool shift = mods & Qt::ShiftModifier;
+    auto rotate = [&](double deg) {
+        if (!m_s.rotateEnabled || m_s.northLock) return;
+        applyBearingDelta(deg, centre);
+        emit keyboardMoved(QStringLiteral("rotate"));
+    };
+    auto tilt = [&](double deg) {
+        if (!m_s.tiltEnabled) return;
+        applyPitchDelta(deg);
+        emit keyboardMoved(QStringLiteral("tilt"));
+    };
+    auto pan = [&](const QPointF& by) {
+        if (!m_s.scrollEnabled) return;
+        m_camera->moveBy(by);
+        emit keyboardMoved(QStringLiteral("pan"));
+    };
     switch (key) {
     case Qt::Key_Left:
-        if (shift) { if (m_s.rotateEnabled && !m_s.northLock) applyBearingDelta(-kKeyboardRotateDeg, centre); }
-        else if (m_s.scrollEnabled) m_camera->moveBy(QPointF(panX, 0));
+        if (shift) rotate(-kKeyboardRotateDeg); else pan(QPointF(panX, 0));
         return true;
     case Qt::Key_Right:
-        if (shift) { if (m_s.rotateEnabled && !m_s.northLock) applyBearingDelta(kKeyboardRotateDeg, centre); }
-        else if (m_s.scrollEnabled) m_camera->moveBy(QPointF(-panX, 0));
+        if (shift) rotate(kKeyboardRotateDeg); else pan(QPointF(-panX, 0));
         return true;
     case Qt::Key_Up:
-        if (shift) { if (m_s.tiltEnabled) applyPitchDelta(kKeyboardTiltDeg); }
-        else if (m_s.scrollEnabled) m_camera->moveBy(QPointF(0, panY));
+        if (shift) tilt(kKeyboardTiltDeg); else pan(QPointF(0, panY));
         return true;
     case Qt::Key_Down:
-        if (shift) { if (m_s.tiltEnabled) applyPitchDelta(-kKeyboardTiltDeg); }
-        else if (m_s.scrollEnabled) m_camera->moveBy(QPointF(0, -panY));
+        if (shift) tilt(-kKeyboardTiltDeg); else pan(QPointF(0, -panY));
         return true;
     case Qt::Key_Plus:
     case Qt::Key_Equal:
-        if (m_s.zoomEnabled) applyZoomDelta(1.0, centre);
+        // M8.22: Shift doubles the step (gl-js keyboard handler); eased.
+        zoomStep(shift ? 2.0 : 1.0, kKeyboardZoomMs);
         return true;
     case Qt::Key_Minus:
-        if (m_s.zoomEnabled) applyZoomDelta(-1.0, centre);
+        zoomStep(shift ? -2.0 : -1.0, kKeyboardZoomMs);
+        return true;
+    case Qt::Key_Escape:
+        emit escapePressed();
         return true;
     case Qt::Key_Return:
     case Qt::Key_Enter:

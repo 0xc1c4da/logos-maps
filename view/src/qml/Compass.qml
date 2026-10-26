@@ -1,9 +1,11 @@
 import QtQuick
 
-// Compass (M6.11): shown while bearing != 0; a tap eases back to north.
+// Compass (M8.17): shown while bearing != 0 or pitch != 0; a tap eases back
+// to north and flat. Colours from the theme (M8.23).
 Item {
     id: compass
     property real bearing: 0
+    property var theme: chrome ? chrome.theme : ({})
     signal clicked()
     width: 36
     height: 36
@@ -11,8 +13,8 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: width / 2
-        color: "#e6ffffff"
-        border.color: "#999"
+        color: compass.theme.background
+        border.color: compass.theme.border
     }
     Item {
         anchors.centerIn: parent
@@ -22,15 +24,21 @@ Item {
         rotation: -compass.bearing
         Canvas {
             anchors.fill: parent
+            property color accent: compass.theme.accent
+            property color fg: compass.theme.foreground
+            onAccentChanged: requestPaint()
+            onFgChanged: requestPaint()
             onPaint: {
                 const ctx = getContext("2d")
                 ctx.reset()
-                ctx.fillStyle = "#d33"
+                ctx.fillStyle = accent
                 ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(14, 10); ctx.lineTo(6, 10); ctx.closePath(); ctx.fill()
-                ctx.fillStyle = "#555"
+                ctx.fillStyle = fg
                 ctx.beginPath(); ctx.moveTo(10, 20); ctx.lineTo(14, 10); ctx.lineTo(6, 10); ctx.closePath(); ctx.fill()
             }
         }
     }
     TapHandler { onTapped: compass.clicked() }
+    Accessible.role: Accessible.Button
+    Accessible.name: qsTr("Reset north")
 }

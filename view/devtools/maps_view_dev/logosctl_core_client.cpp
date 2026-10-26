@@ -159,6 +159,14 @@ void LogosctlCoreClient::setBasemap(const QString& viewId, const QString& id, Co
 {
     call(QStringLiteral("setBasemap"), {str(viewId), str(id)}, Shape::Result, std::move(cb));
 }
+void LogosctlCoreClient::setGroupVisible(const QString& viewId, const QString& session, const QString& groupId, bool visible, CoreCallback cb)
+{
+    call(QStringLiteral("setGroupVisible"), {str(viewId), str(session), str(groupId), visible ? QStringLiteral("true") : QStringLiteral("false")}, Shape::Bool, std::move(cb));
+}
+void LogosctlCoreClient::setFeatureState(const QString& session, const QString& sourceId, const QString& featureId, const QString& stateJson, CoreCallback cb)
+{
+    call(QStringLiteral("setFeatureState"), {str(session), str(sourceId), str(featureId), str(stateJson)}, Shape::Bool, std::move(cb));
+}
 void LogosctlCoreClient::listProviders(CoreCallback cb)
 {
     call(QStringLiteral("listProviders"), {}, Shape::Text, std::move(cb));

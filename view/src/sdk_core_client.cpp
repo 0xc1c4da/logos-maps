@@ -80,6 +80,8 @@ void SdkCoreClient::subscribe()
     m_core.onFeatureStateChanged(forward("featureStateChanged"));
     m_core.onCacheClearRequested(forward("cacheClearRequested"));
     m_core.onCatalogueChanged(forward("catalogueChanged"));
+    m_core.onGroupVisibilityChanged(forward("groupVisibilityChanged"));
+    m_core.onCalloutContentChanged(forward("calloutContentChanged"));
     m_core.onSubscriptionStatus([this](logos::SubStatus status, std::uint64_t) {
         const bool up = status == logos::SubStatus::Armed;
         QPointer<SdkCoreClient> self(this);
@@ -133,6 +135,16 @@ void SdkCoreClient::listBasemaps(const QString& filterJson, CoreCallback cb) { M
 void SdkCoreClient::setBasemap(const QString& viewId, const QString& id, CoreCallback cb)
 {
     MAPS_SDK_CALL(setBasemap, replyFromLogosResult, viewId, id);
+}
+
+void SdkCoreClient::setGroupVisible(const QString& viewId, const QString& session, const QString& groupId, bool visible, CoreCallback cb)
+{
+    MAPS_SDK_CALL(setGroupVisible, replyFromBool, viewId, session, groupId, visible);
+}
+
+void SdkCoreClient::setFeatureState(const QString& session, const QString& sourceId, const QString& featureId, const QString& stateJson, CoreCallback cb)
+{
+    MAPS_SDK_CALL(setFeatureState, replyFromBool, session, sourceId, featureId, stateJson);
 }
 
 void SdkCoreClient::listProviders(CoreCallback cb) { MAPS_SDK_CALL(listProviders, replyFromString); }

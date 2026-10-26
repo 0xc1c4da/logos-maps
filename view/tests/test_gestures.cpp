@@ -713,10 +713,28 @@ int main(int argc, char** argv)
         CHECK(r.cam.moves == 1 && std::fabs(r.cam.totalMove.x() - 800 * 0.18) < 1e-9);
         CHECK(r.gc.keyPressed(Qt::Key_Up, 0));
         CHECK(std::fabs(r.cam.totalMove.y() - 600 * 0.18) < 1e-9);
+        // M8.22: +/- ease by one level (two with Shift) about the padded
+        // centre (no anchor), the same path as the zoom buttons.
+        const double z0 = r.cam.z;
         CHECK(r.gc.keyPressed(Qt::Key_Plus, 0));
-        CHECK(std::fabs(r.cam.totalZoom - 1.0) < 1e-9);
+        CHECK(r.cam.eases == 1 && r.cam.lastEase && r.cam.lastEase->zoom && std::fabs(*r.cam.lastEase->zoom - (z0 + 1.0)) < 1e-9);
+        CHECK(r.cam.lastEase->durationMs == gesture::kKeyboardZoomMs && !r.cam.lastEase->anchor);
         CHECK(r.gc.keyPressed(Qt::Key_Minus, 0));
-        CHECK(std::fabs(r.cam.totalZoom) < 1e-9);
+        CHECK(std::fabs(r.cam.z - z0) < 1e-9);
+        CHECK(r.gc.keyPressed(Qt::Key_Plus, Qt::ShiftModifier));
+        CHECK(std::fabs(r.cam.z - (z0 + 2.0)) < 1e-9);
+        CHECK(r.gc.keyPressed(Qt::Key_Minus, Qt::ShiftModifier));
+        CHECK(std::fabs(r.cam.z - z0) < 1e-9);
+        int keyboardMoves = 0, escapes = 0;
+        QObject::connect(&r.gc, &GestureController::keyboardMoved, [&](const QString&) { ++keyboardMoves; });
+        QObject::connect(&r.gc, &GestureController::escapePressed, [&] { ++escapes; });
+        CHECK(r.gc.keyPressed(Qt::Key_Escape, 0) && escapes == 1);
+        CHECK(r.gc.zoomStep(1.0, gesture::kZoomButtonMs) && r.cam.lastEase->durationMs == gesture::kZoomButtonMs && keyboardMoves == 1);
+        CHECK(r.gc.canZoomIn() && r.gc.canZoomOut());
+        r.gc.setMaxZoom(r.cam.z);
+        CHECK(!r.gc.canZoomIn() && !r.gc.zoomStep(1.0, gesture::kZoomButtonMs));
+        r.gc.setMaxZoom(gesture::kMaxZoom);
+        r.gc.zoomStep(-1.0, 0);
         CHECK(r.gc.keyPressed(Qt::Key_Right, Qt::ShiftModifier));
         CHECK(std::fabs(r.cam.b - 15.0) < 1e-9);
         CHECK(r.gc.keyPressed(Qt::Key_Up, Qt::ShiftModifier));
@@ -812,7 +830,7 @@ int main(int argc, char** argv)
         // Keys reach the controller through the focused root.
         cam.reset();
         QTest::keyClick(&window, Qt::Key_Plus);
-        WAIT_FOR_MS(cam.scales >= 1, 2000);
+        WAIT_FOR_MS(cam.eases >= 1, 2000);
     }
 
     return finish();

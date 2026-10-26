@@ -65,6 +65,7 @@ void MapsViewBackend::start()
     connect(c, &maps::view::ViewController::cameraIdle, this, &MapsViewBackend::cameraIdle);
     connect(c, &maps::view::ViewController::featurePicked, this, &MapsViewBackend::featurePicked);
     connect(c, &maps::view::ViewController::attributionChanged, this, &MapsViewBackend::attributionChanged);
+    connect(c, &maps::view::ViewController::shareRequested, this, &MapsViewBackend::shareRequested);
     connect(c, &maps::view::ViewController::error, this, [this](const QString& code, const QString& message) {
         qWarning("maps_view: %s %s", qPrintable(code), qPrintable(message));
         if (code == QLatin1String("maps.internal")) setStatus(QStringLiteral("error: ") + message);

@@ -6,6 +6,7 @@
 #include "providers/logos_file_source.h"
 #include "providers/provider_registry.h"
 #include "view/builtins.h"
+#include "view/chrome_controller.h"
 #include "view/selection_overlay.h"
 #include "view/capabilities.h"
 #include "view/map_change.h"
@@ -21,6 +22,7 @@
 
 #include <QMapLibre/Types>
 
+#include <QClipboard>
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -55,6 +57,53 @@ ViewController::ViewController(CoreClient* core, Options options, QObject* paren
     connect(&m_stateTimer, &QTimer::timeout, this, &ViewController::publishViewState);
 
     if (m_core) connect(m_core, &CoreClient::coreEvent, this, &ViewController::onCoreEvent);
+
+    // Section 8.4: the chrome exists before the window so theme / chrome
+    // options can arrive first; it acts on the core only through us.
+    m_chrome = std::make_unique<ChromeController>(this);
+    connect(m_chrome.get(), &ChromeController::groupVisibilityRequested, this, [this](const QString& session, const QString& groupId, bool visible) {
+        if (!m_opened || !m_core) return;
+        m_core->setGroupVisible(m_viewId, session, groupId, visible, [this](const CoreReply& reply) {
+            if (!reply.ok && !reply.error.isEmpty()) emit error(reply.code(), reply.error);
+        });
+    });
+    connect(m_chrome.get(), &ChromeController::basemapRequested, this, [this](const QString& id) {
+        if (!m_opened || !m_core) {
+            loadBasemap(id);
+            return;
+        }
+        m_core->setBasemap(m_viewId, id, [this](const CoreReply& reply) {
+            if (!reply.ok && !reply.error.isEmpty()) emit error(reply.code(), reply.error);
+        });
+    });
+    connect(m_chrome.get(), &ChromeController::featureStateRequested, this,
+            [this](const QString& session, const QString& sourceId, const QString& featureId, const QJsonObject& state) {
+                if (m_opened && m_core) {
+                    m_core->setFeatureState(session, sourceId, featureId, compact(state), [](const CoreReply&) {});
+                } else if (m_applier) {
+                    // Standalone: apply locally so the highlight still shows.
+                    m_applier->onFeatureStateChanged(QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("session"), session}, {QStringLiteral("sourceId"), sourceId},
+                                                                 {QStringLiteral("featureId"), featureId}, {QStringLiteral("state"), state}});
+                }
+            });
+    connect(m_chrome.get(), &ChromeController::pinChanged, this, &ViewController::syncPickerLayers);
+    connect(m_chrome.get(), &ChromeController::visibilityChanged, this, [this] { refreshViewState(false); });
+}
+
+void ViewController::requestShare(const QString& kind, const QString& text)
+{
+    if (text.isEmpty()) return;
+    if (QClipboard* cb = QGuiApplication::clipboard()) cb->setText(text);  // works when our window has focus (wayland / own window)
+    emit shareRequested(compact(QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("kind"), kind}, {QStringLiteral("text"), text}}));
+}
+
+void ViewController::recordOptions(const QJsonObject& options)
+{
+    for (auto it = options.begin(); it != options.end(); ++it) {
+        if (it.key() == QLatin1String("v")) continue;
+        m_options_.insert(it.key(), it.value());
+    }
+    refreshViewState(false);
 }
 
 ViewController::~ViewController()
@@ -120,6 +169,7 @@ void ViewController::start()
     m_gestures = std::make_unique<GestureController>(this);
     m_window->setGestureController(m_gestures.get());
     m_window->setContextObject(QStringLiteral("view"), this);
+    m_window->setContextObject(QStringLiteral("chrome"), m_chrome.get());
     m_mapItem = m_window->load(m_options.qmlDir);
     if (!m_mapItem) {
         setStatus(QStringLiteral("failed"));
@@ -139,7 +189,12 @@ void ViewController::start()
             m_attributionHtml = html;
             emit attributionChanged(html);
         });
+        connect(m_styles.get(), &StyleLoader::basemapLoading, m_chrome.get(), &ChromeController::onBasemapLoading);
+        connect(m_styles.get(), &StyleLoader::descriptorChanged, m_chrome.get(), &ChromeController::onBasemapDescriptor);
+        connect(m_applier.get(), &SceneApplier::groupsChanged, this, [this] { m_chrome->onSceneGroupsChanged(m_applier->groups()); });
+        connect(m_applier.get(), &SceneApplier::layersRemoved, m_chrome.get(), &ChromeController::onLayersRemoved);
         connect(m_styles.get(), &StyleLoader::basemapFailed, this, [this](const QString& id, const QString& reason) {
+            m_chrome->onBasemapFailed(id, reason);
             emit error(QStringLiteral("maps.basemapFailed"), id + QStringLiteral(": ") + reason);
             // The previous style stays on screen; the view state reports what
             // is actually rendered, not what was asked for.
@@ -198,10 +253,13 @@ void ViewController::attachInput(QMapLibre::Map* map)
         refreshViewState(false);
     });
     connect(m_gestures.get(), &GestureController::idle, this, [this] { refreshViewState(true); });
-    // M8.7 gesture kinds for follow-camera policies.
+    // M8.7 gesture kinds for follow-camera policies (ours in M8.18, modules' via the event).
     connect(m_gestures.get(), &GestureController::gestureBegan, this, [this](const QString& kind) {
+        m_chrome->onGestureBegan(kind);
         reportEvent(QStringLiteral("gestureBegan"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("kind"), kind}});
     });
+    connect(m_gestures.get(), &GestureController::keyboardMoved, m_chrome.get(), &ChromeController::onKeyboardMoved);
+    connect(m_gestures.get(), &GestureController::escapePressed, this, [this] { m_chrome->escape(); });
     connect(m_gestures.get(), &GestureController::gestureEnded, this, [this](const QString& kind) {
         reportEvent(QStringLiteral("gestureEnded"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("kind"), kind}});
     });
@@ -216,24 +274,35 @@ void ViewController::attachInput(QMapLibre::Map* map)
     connect(m_picker.get(), &Picker::picked, this, [this](const QJsonObject& payload) {
         emit featurePicked(compact(payload));
         reportEvent(QStringLiteral("featurePicked"), payload);
+        m_chrome->onFeaturePicked(payload);  // callout / pin (M8.19, M8.21)
     });
     connect(m_picker.get(), &Picker::failed, this, &ViewController::error);
 
     // Built-ins ride above the scene (M6.11).
-    connect(m_applier.get(), &SceneApplier::layersReconciled, this, [this](const QStringList&, const QStringList&) {
-        // M8.13: the engine's style JSON is the loaded document, so runtime
-        // layers are resolved from the applier's own table.
-        if (m_picker && m_applier) {
-            std::vector<Picker::SceneLayer> layers;
-            for (const SceneApplier::LayerInfo& l : m_applier->layerInfos()) layers.push_back({l.id, l.source, l.sourceLayer, l.type});
-            m_picker->setSceneLayers(std::move(layers));
-        }
+    connect(m_applier.get(), &SceneApplier::layersReconciled, this, [this](const QStringList&, const QStringList& missing) {
+        syncPickerLayers();
         if (m_builtins) m_builtins->onSceneLayersReconciled();
         if (m_selection) m_selection->onSceneLayersReconciled();
+        if (m_chrome) {
+            m_chrome->updatePinSource();
+            if (!missing.isEmpty()) m_chrome->onAnchorMissing(missing.first());
+        }
     });
 
     // Settings that arrived before the map existed.
     if (!m_options_.isEmpty()) applyOptions(m_options_);
+}
+
+void ViewController::syncPickerLayers()
+{
+    // M8.13: the engine's style JSON is the loaded document, so runtime
+    // layers are resolved from the applier's own table (+ the pin, M8.21).
+    if (!m_picker || !m_applier) return;
+    std::vector<Picker::SceneLayer> layers;
+    for (const SceneApplier::LayerInfo& l : m_applier->layerInfos()) layers.push_back({l.id, l.source, l.sourceLayer, l.type});
+    if (m_chrome && m_chrome->pinInstalled())
+        layers.push_back({QLatin1String(ChromeController::kPinLayer), QLatin1String(ChromeController::kPinSource), QString(), QStringLiteral("circle")});
+    m_picker->setSceneLayers(std::move(layers));
 }
 
 void ViewController::pickAt(const QString& kind, const QPointF& px)
@@ -324,6 +393,7 @@ void ViewController::openView()
         // Scene content published before we opened: the style load that
         // follows replays anyway, but a view without a style still needs it.
         m_applier->pullChanges();
+        fetchCatalogue();
         refreshViewState(true);
     });
 }
@@ -363,12 +433,20 @@ void ViewController::onCoreEvent(const QString& topic, const QJsonObject& payloa
         if (mine) loadBasemap(payload.value(QStringLiteral("id")).toString());
     } else if (topic == QLatin1String("cameraIntent")) {
         if (mine && m_mapItem && m_mapItem->map()) {
-            const IntentResult r = applyCameraIntent(*m_mapItem->map(), payload.value(QStringLiteral("intent")).toObject(), viewportSize(), m_gestureInProgress);
+            const QJsonObject intent = payload.value(QStringLiteral("intent")).toObject();
+            const IntentResult r = applyCameraIntent(*m_mapItem->map(), intent, viewportSize(), m_gestureInProgress);
             if (!r.accepted) emit error(r.error.section(QLatin1Char(':'), 0, 0), r.error);
+            else m_chrome->onIntent(intent);  // M7.4b keepFollow
             refreshViewState(!r.animated);
         }
     } else if (topic == QLatin1String("viewOptionsChanged")) {
         if (mine) applyOptions(payload.value(QStringLiteral("options")).toObject());
+    } else if (topic == QLatin1String("groupVisibilityChanged")) {
+        if (mine) m_chrome->onGroupVisibilityChanged(payload.value(QStringLiteral("groupId")).toString(), payload.value(QStringLiteral("visible")).toBool(true));
+    } else if (topic == QLatin1String("calloutContentChanged")) {
+        if (mine) m_chrome->onCalloutContent(payload.value(QStringLiteral("content")).toObject());
+    } else if (topic == QLatin1String("catalogueChanged")) {
+        fetchCatalogue();
     } else if (topic == QLatin1String("featureStateChanged")) {
         if (m_applier) m_applier->onFeatureStateChanged(payload);
     } else if (topic == QLatin1String("cacheClearRequested")) {
@@ -388,7 +466,17 @@ void ViewController::onCoreEvent(const QString& topic, const QJsonObject& payloa
     } else if (topic == QLatin1String("snapshotRequested")) {
         if (mine) takeSnapshot(payload.value(QStringLiteral("requestId")).toString(), payload.value(QStringLiteral("options")).toObject());
     }
-    // catalogueChanged: the catalogue is read on demand; nothing to do here.
+}
+
+void ViewController::fetchCatalogue()
+{
+    // M8.20 (c): the layers panel lists the catalogue as thumbnails.
+    if (!m_core || !m_opened) return;
+    m_core->listBasemaps(QStringLiteral("{\"v\":1}"), [this](const CoreReply& reply) {
+        if (!reply.ok) return;
+        const QJsonArray list = reply.value.isArray() ? reply.value.toArray() : reply.object().value(QStringLiteral("basemaps")).toArray();
+        if (m_chrome) m_chrome->onCatalogue(list);
+    });
 }
 
 // M7.4 / section 16.7: `snapshot(viewId, options)` on maps_core becomes a
@@ -521,16 +609,21 @@ void ViewController::onMapChange(int change)
     const MapChangeMapping m = mapChangeMapping(mc);
     static const bool trace = qEnvironmentVariableIsSet("MAPS_VIEW_TRACE");
     if (trace) qDebug("maps_view: MapChange %s", qPrintable(mapChangeName(mc)));
-    if (m.opensBlockingWindow && m_applier) m_applier->onStyleWillLoad();
+    if (m.opensBlockingWindow) {
+        if (m_applier) m_applier->onStyleWillLoad();
+        if (m_chrome) m_chrome->onStyleWillLoad();
+    }
     switch (m.event) {
     case PublicEvent::BasemapLoading:
         if (m_picker) m_picker->setStyleLoaded(false);
         reportEvent(QStringLiteral("basemapLoading"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("id"), m_basemap}});
         break;
     case PublicEvent::BasemapLoaded:
+        if (m_chrome) m_chrome->onBasemapLoaded(m_basemap);
         reportEvent(QStringLiteral("basemapLoaded"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("id"), m_basemap}});
         break;
     case PublicEvent::BasemapFailed:
+        if (m_chrome) m_chrome->onBasemapFailed(m_basemap, QString());
         reportEvent(QStringLiteral("basemapFailed"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("id"), m_basemap}});
         break;
     case PublicEvent::StyleReady:
@@ -543,6 +636,7 @@ void ViewController::onMapChange(int change)
         if (m_applier && m.triggersReplay) m_applier->onStyleLoaded();
         if (m_builtins) m_builtins->onStyleLoaded();
         if (m_selection) m_selection->onStyleLoaded();
+        if (m_chrome) m_chrome->onStyleLoaded();
         if (m_picker) m_picker->setStyleLoaded(true);
         reportEvent(QStringLiteral("styleReady"), QJsonObject{{QStringLiteral("v"), 1}, {QStringLiteral("id"), m_basemap}});
         break;
@@ -599,7 +693,10 @@ void ViewController::refreshViewState(bool idle)
     m_lastCamera = cam;
     m_viewState = state;
     m_stateDirty = true;
-    if (cameraMoved) emit chromeChanged();
+    if (cameraMoved) {
+        emit chromeChanged();
+        if (m_chrome) m_chrome->onCameraChanged();
+    }
     if (cameraMoved && !m_tracked.isEmpty() && !m_stateTimer.isActive()) publishTracked();
     if (idle) {
         QJsonObject idlePayload = cam.toJson();
@@ -697,6 +794,8 @@ void ViewController::applyOptions(const QJsonObject& options)
         if (options.contains(QStringLiteral("location"))) m_builtins->setLocation(options.value(QStringLiteral("location")));
         if (options.value(QStringLiteral("puck")).isObject()) m_builtins->setPuckOptions(options.value(QStringLiteral("puck")).toObject());
     }
+    // Section 8.4: theme, chrome items, follow, hidden groups/details, pin.
+    if (m_chrome) m_chrome->applyOptions(options);
     refreshViewState(false);
 }
 
@@ -713,6 +812,7 @@ void ViewController::camera(const QString& intentJson)
         emit error(r.error.section(QLatin1Char(':'), 0, 0), r.error);
         return;
     }
+    if (m_chrome) m_chrome->onIntent(doc.object());  // M7.4b keepFollow
     refreshViewState(!r.animated);
 }
 
@@ -748,16 +848,18 @@ void ViewController::setGestureInProgress(bool inProgress)
 
 bool ViewController::compassVisible() const
 {
-    // A compass whose visibility follows bearing != 0 (M6.11); under north
-    // lock the bearing is pinned so there is nothing to show.
-    return std::fabs(m_lastCamera.bearing) > gesture::kNorthLockSlackDeg;
+    // M8.17: visible while bearing != 0 or pitch != 0; under north lock the
+    // bearing is pinned, so only pitch can show it.
+    return std::fabs(m_lastCamera.bearing) > gesture::kNorthLockSlackDeg || m_lastCamera.pitch > 0.5;
 }
 
 void ViewController::resetNorth()
 {
+    // M8.17: the compass resets north *and* pitch (gl-js resetNorthPitch).
     if (!m_mapItem || !m_mapItem->map()) return;
     QMapLibre::CameraOptions camera;
     camera.bearing = 0.0;
+    camera.pitch = 0.0;
     m_mapItem->map()->easeTo(camera, QMapLibre::AnimationOptions(300));
     refreshViewState(false);
 }

@@ -54,9 +54,34 @@ public:
     /// runtime layers, so picking resolves them from here -- M8.13).
     struct LayerInfo {
         QString id, source, sourceLayer, type;
+        QString group;        // global group id, "" when ungrouped (M6.3a)
+        QJsonObject callout;  // M6.3b declaration, empty when none
+        bool selectable = false;
     };
     std::vector<LayerInfo> layerInfos() const;
+    std::optional<LayerInfo> layerInfo(const QString& id) const;
     QStringList knownLayers() const;
+
+    // ── groups and per-view visibility (M6.3a, M8.20, M9.1a) ───────────
+    /// Every group in the scene as {session, id, title, ..., layers[]}.
+    QJsonArray groups() const;
+    /// Global group ids hidden in this view (`hiddenGroups` option): member
+    /// layers get layout.visibility none, in this view only.
+    void setHiddenGroups(const QStringList& groupIds);
+    QStringList hiddenGroups() const { return m_hiddenGroups; }
+    /// Basemap `details` (descriptor) and the ids hidden in this view: style
+    /// layers whose id starts with a hidden detail's prefix are hidden after
+    /// every style load, before the scene replays.
+    void setBasemapDetails(const QJsonArray& details);
+    QJsonArray basemapDetails() const { return m_basemapDetails; }
+    /// `hiddenDetails` / `shownDetails` options: explicit user choices over
+    /// each detail's `defaultVisible`.
+    void setHiddenDetails(const QStringList& hidden, const QStringList& shown);
+    QStringList hiddenDetails() const { return m_hiddenDetails; }
+    QStringList shownDetails() const { return m_shownDetails; }
+    bool detailVisible(const QJsonObject& detail) const;
+    /// Is this scene layer currently shown in this view (group not hidden)?
+    bool layerVisible(const QString& id) const;
 
     // Driven by MapItem::mapChanged through ViewController, or directly in tests.
     void onStyleWillLoad();      // WillStartLoadingMap: open the blocking window
@@ -93,12 +118,22 @@ signals:
     void featureStateFallback(const QString& sourceId, const QString& featureId, const QJsonValue& state);
     /// A scene source was (re)defined or its GeoJSON replaced.
     void sourceUpdated(const QString& sourceId);
+    /// Groups or layer membership changed (the panel model rebuilds).
+    void groupsChanged();
+    /// Scene layers removed by an op or a replay (callouts anchored to them close).
+    void layersRemoved(const QStringList& layerIds);
 
 private:
     struct LayerDef {
         QJsonObject params;  // style-spec layer object minus id/placement
         QString source;
+        QString group;
+        QJsonObject callout;
+        bool selectable = false;
     };
+    QVariantMap layerParams(const QString& id, const LayerDef& def) const;
+    void applyGroupVisibility();
+    void applyDetailVisibility();
 
     void finishRevision(quint64 revision);
     void reconcileLayers(std::function<void()> then);
@@ -129,6 +164,10 @@ private:
     std::map<QString, SourceDef> m_sources;
     std::map<QString, LayerDef> m_layers;
     std::map<QString, QJsonObject> m_images;
+    std::map<QString, QJsonObject> m_groups;  // global id -> group object (+ "session")
+    QStringList m_hiddenGroups;
+    QJsonArray m_basemapDetails;
+    QStringList m_hiddenDetails, m_shownDetails;
     bool m_nativeFeatureState = hasFeatureState();
     QStringList m_order;
     QStringList m_missingAnchors;

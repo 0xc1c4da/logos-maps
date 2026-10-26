@@ -53,6 +53,8 @@ add_library(maps_view_lib STATIC
     ${VIEW_SRC}/view/builtins.cpp
     ${VIEW_SRC}/view/selection_overlay.h
     ${VIEW_SRC}/view/selection_overlay.cpp
+    ${VIEW_SRC}/view/chrome_controller.h
+    ${VIEW_SRC}/view/chrome_controller.cpp
 )
 target_include_directories(maps_view_lib PUBLIC ${VIEW_SRC})
 
@@ -106,6 +108,13 @@ set_tests_properties(gestures PROPERTIES
     ENVIRONMENT "MAPS_VIEW_QML_DIR=${VIEW_SRC}/qml;QT_QPA_PLATFORM=offscreen"
     TIMEOUT 300)
 
+add_executable(test_chrome test_chrome.cpp fake_core_client.h fake_core_client.cpp)
+target_link_libraries(test_chrome PRIVATE maps_view_lib)
+add_test(NAME chrome COMMAND test_chrome)
+set_tests_properties(chrome PROPERTIES
+    ENVIRONMENT "MAPS_VIEW_QML_DIR=${VIEW_SRC}/qml;QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 300)
+
 add_executable(test_providers test_providers.cpp)
 target_link_libraries(test_providers PRIVATE maps_view_lib SQLite::SQLite3)
 if(MAPS_VIEW_PMTILES_INCLUDE)
@@ -125,5 +134,5 @@ if(MAPS_VIEW_BUILD_DEV)
     # directory (ViewWindow::pluginDirectory); ship the QML next to it.
     install(DIRECTORY ${VIEW_SRC}/qml DESTINATION bin)
 endif()
-install(TARGETS test_engine_contract test_providers test_gestures test_picking RUNTIME DESTINATION libexec/maps-view-tests)
+install(TARGETS test_engine_contract test_providers test_gestures test_picking test_chrome RUNTIME DESTINATION libexec/maps-view-tests)
 install(DIRECTORY ${VIEW_SRC}/qml DESTINATION libexec/maps-view-tests)

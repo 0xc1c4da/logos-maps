@@ -67,6 +67,8 @@ constexpr double kSmallTurnSnapBackDeg = 12.0;
 constexpr double kKeyboardPanFraction = 0.18;
 constexpr double kKeyboardRotateDeg = 15.0;
 constexpr double kKeyboardTiltDeg = 10.0;
+constexpr int kKeyboardZoomMs = 300;     // M8.22 (gl-js keyboard ease)
+constexpr int kZoomButtonMs = 500;       // M8.17 (gl-js NavigationControl easeTo default)
 constexpr double kPickBoxDp = 24.0;
 }  // namespace gesture
 
@@ -171,6 +173,12 @@ public:
     /// M8.8 keyboard / D-pad. Returns true when consumed.
     Q_INVOKABLE bool keyPressed(int key, int modifiers);
     Q_INVOKABLE bool keyReleased(int key, int modifiers);
+    /// M8.17 / M8.22: zoom by `levels` about the padded centre (or the focal
+    /// point) with an ease -- the one path the zoom buttons and +/- share.
+    /// Returns false when the zoom is disabled or already at the limit.
+    Q_INVOKABLE bool zoomStep(double levels, int durationMs);
+    bool canZoomIn() const;
+    bool canZoomOut() const;
 
     // ── time ────────────────────────────────────────────────────────────
     /// Advance inertia and timeouts by `ms` (the 16 ms timer calls tick(16)).
@@ -196,6 +204,11 @@ signals:
     void idle();
     /// D-pad / keyboard OK: pick at the view centre (long = long press).
     void centrePickRequested(bool longPress);
+    /// A keyboard step moved the camera: kind is pan|rotate|tilt|zoom. The
+    /// follow policy (M8.18) treats pan/rotate like the touch gestures.
+    void keyboardMoved(const QString& kind);
+    /// Escape (M8.22): the chrome decides what it closes.
+    void escapePressed();
 
 private:
     struct Settings {
