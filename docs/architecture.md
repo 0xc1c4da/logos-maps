@@ -36,10 +36,10 @@ Every claim borrowed from, or checkable against, another project is cited as `<a
 | **OFM** | `hyperknot/openfreemap` @ `0381d4d` | `references/openfreemap/` | Default public tile host; self-hosting; PMTiles/MBTiles planet dumps |
 | **OFMS** | `hyperknot/openfreemap-styles` @ `6e53612` | `references/openfreemap-styles/` | Liberty/Bright/Positron/Fiord/Dark styles; shared `openmaptiles` source, glyph and sprite URLs |
 | **STYLE** | `maplibre/maplibre-style-spec` @ `6c90d45` | `references/maplibre-style-spec/src/reference/v8.json` | Source and layer types |
-| **BC** | `logos-co/logos-basecamp` @ `5454a52` | `../logos-basecamp/` | Process model, QML sandbox, Wayland/EGL runtime |
+| **BC** | `logos-co/logos-basecamp` @ `66a747e` | `../logos-basecamp/` | Process model, QML sandbox, Wayland/EGL runtime |
 | **LVMR** | `logos-co/logos-view-module-runtime` @ `a04b463` | `../logos-view-module-runtime/` | `ui-host`, `ViewModuleHost`, `LogosQmlBridge` |
 | **LVM** | `logos-co/logos-view-module` @ `8fd4811` | `../logos-view-module/` | `LogosUiPluginContext` |
-| **LMB** | `logos-co/logos-module-builder` @ `6e3f7a5` | `../logos-module-builder/` | Templates, `metadata.json` keys, `nix.packages`, `external_libraries` |
+| **LMB** | `logos-co/logos-module-builder` @ `8f56bf8` | `../logos-module-builder/` | Templates, `metadata.json` keys, `nix.packages`, `external_libraries` |
 | **SDK** | `logos-co/logos-cpp-sdk` @ `3bf5365` | `../logos-cpp-sdk/` | `LogosModuleContext`, `logos_events`, `bind_<iface>()`, type surface, nixpkgs pin |
 | **PROTO** | `logos-co/logos-protocol` @ `9d59f5d` | `../logos-protocol/` | Call timeouts, frame size |
 | **LIDL** | `logos-co/logos-lidl` @ `5941b8f` | `../logos-lidl/` | Contract type surface |

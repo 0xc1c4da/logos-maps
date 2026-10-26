@@ -42,17 +42,24 @@ hostile module; what that needs is recorded in RFC-5 rev 2 §Part D.
 Each repository has a local branch `rfc/view-surface` at the commit the maps tests
 were run against (spec §16.6/§16.7, `view/tests/basecamp-surface.mjs`, `view/tests/logosctl/e2e.sh`):
 
-| Repository | `rfc/view-surface` | Upstream base | RFC commits | PR |
+| Repository | `rfc/view-surface` | Upstream base (`master`) | RFC commits | PR |
 |---|---|---|---|---|
-| `logos-view-module-runtime` | `2839d1a` | `a04b463` (main) | `f8f9424` (RFC-1, RFC-2), `ee5eefb` (RFC-2 amendments), `1232d57` (RFC-7, RFC-8: `LogosViewSurface` library, `d3d11`/`iosurface` skeletons), `b5f170a` (RFC-7: `ui-host --surface-transport channel`), `01bf4ef` (tests), `2839d1a` (RFC-7 §5 rev 2 standing credit) | one PR, six commits; `d3d11`/`iosurface` are marked unverified in the sources and the commit |
-| `logos-module-builder` | `249eb33` | `8f56bf8` (main) | `6a3994f` (RFC-5 part A), `249eb33` (RFC-8: runtime include dir and library for `view_surface` modules) | one PR; the branch also carries three unrelated local commits (`46f4990`, `8b6d681`, `6e3f7a5`, nim packaging) that sit below it — both RFC commits cherry-pick cleanly onto `8f56bf8`, so the PR can be opened from a rebased copy |
-| `logos-basecamp` | `baabe03` | `572f722` (main) | `37c9a57` (RFC-3, RFC-4, RFC-5 part B), `62c430f` (RFC-4 rev 2 hardening H1–H4, qtwayland patch), `f73b358` (RFC-6/RFC-7 backends, `SurfaceChannelHost`, `SurfacePolicy`, `SurfaceTransportSelector`), `6cfae7f` (tests, `docs/spec.md`), `baabe03` (pacing debug summary) | one PR; the branch sits on `5454a52` (dev build takes its GL stack from the closure), which is a prerequisite for running the dev launcher with GL at all and should land first or be included; its `logos-view-module-runtime` input must be bumped to the merged runtime commit |
+| `logos-view-module-runtime` | `2839d1a` ([0xc1c4da/logos-view-module-runtime](https://github.com/0xc1c4da/logos-view-module-runtime/tree/rfc/view-surface)) | `a04b463` | `f8f9424` (RFC-1, RFC-2), `ee5eefb` (RFC-2 amendments), `1232d57` (RFC-7, RFC-8: `LogosViewSurface` library, `d3d11`/`iosurface` skeletons), `b5f170a` (RFC-7: `ui-host --surface-transport channel`), `01bf4ef` (tests), `2839d1a` (RFC-7 §5 rev 2 standing credit) | one PR, six commits; `d3d11`/`iosurface` are marked unverified in the sources and the commit |
+| `logos-module-builder` | `9461ab1` ([0xc1c4da/logos-module-builder](https://github.com/0xc1c4da/logos-module-builder/tree/rfc/view-surface)) | `8f56bf8` | `7ddd992` (RFC-5 part A; was `6a3994f`), `9461ab1` (RFC-8: runtime include dir and library for `view_surface` modules; was `249eb33`) | one PR, two commits, cut clean off `8f56bf8` (the nim-packaging commits that sat below the earlier branch are kept locally as `nim-packaging`) |
+| `logos-basecamp` | `0025e6b` ([0xc1c4da/logos-basecamp](https://github.com/0xc1c4da/logos-basecamp/tree/rfc/view-surface)) | `66a747e` | `5d0aa21` (RFC-3, RFC-4, RFC-5 part B), `8c42fd5` (RFC-4 rev 2 hardening H1–H4, qtwayland patch), `1592fda` (RFC-6/RFC-7 backends, `SurfaceChannelHost`, `SurfacePolicy`, `SurfaceTransportSelector`), `725eb48` (tests, `docs/spec.md`), `0025e6b` (pacing debug summary) | one PR, five commits; the former prerequisite `5454a52` (dev build takes its GL stack from the closure) landed upstream as `66a747e` (#522) and the branch is rebased onto it; its `logos-view-module-runtime` input must be bumped to the merged runtime commit |
+
+The hashes before the rebase (`37c9a57`, `62c430f`, `f73b358`, `6cfae7f`, `baabe03`;
+`6a3994f`, `249eb33`) are the ones the RFC texts and `architecture.md` cite for "what was
+implemented where"; the trees are identical, only the parents changed.
 
 Order: runtime first (RFC-1/2/7/8 are what Basecamp and the builder link against),
 builder next (RFC-5 A and RFC-8's include dir), Basecamp last with its
 `logos-view-module-runtime` input bumped to the merged runtime commit. Each branch was
 tested at its tip; intermediate commits build on Linux but were not re-tested one by one.
-Nothing is pushed from this workspace; the branches are local.
+The builder and Basecamp PRs are drafts until the runtime PR merges: their `flake.nix`
+input is `github:logos-co/logos-view-module-runtime`, so their locks can only point at
+the merged commit. The branches are pushed to the `0xc1c4da` forks listed above; the
+RFCs are referenced from the PRs at a fixed commit of this repository.
 
 What was verified before offering them (all on Qt 6.9.2 from the SDK's nixpkgs, Linux,
 Wayland session, Radeon 8060S):
