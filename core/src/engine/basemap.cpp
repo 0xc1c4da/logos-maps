@@ -13,7 +13,7 @@ namespace {
 const std::set<std::string> kKeys = {"v", "id", "name", "format", "style_url", "tile_url", "tile_size", "provider",
                                      "attribution", "profiles", "type", "light", "vehicle", "lang", "lang_key",
                                      "keys", "logo", "fingerprint", "anchors", "zoom", "patch",
-                                     "thumbnail", "details"};
+                                     "thumbnail", "details", "label"};
 const std::set<std::string> kPatchOps = {"glyphs", "sprite", "sourceUrl", "fontStack", "labelLanguage",
                                          "hideLayers", "setPaint", "setLayout", "jsonPatch"};
 
@@ -109,7 +109,9 @@ std::vector<DescriptorError> validateDescriptor(const json& d) {
             if (!kPatchOps.count(p["op"].get<std::string>())) errs.push_back({path + "/op", "unknown patch op"});
         }
     }
-    // M9.1a: thumbnail (string) and details[] {id, title, layerPrefixes[], defaultVisible?}.
+    // M9.1a: label (short tile name), thumbnail (string) and details[]
+    // {id, title, icon?, layerPrefixes[], defaultVisible?}.
+    expectString(d, "label", errs);
     expectString(d, "thumbnail", errs);
     if (d.contains("details") && !d["details"].is_null()) {
         if (!d["details"].is_array()) errs.push_back({"/details", "must be an array"});
@@ -124,6 +126,7 @@ std::vector<DescriptorError> validateDescriptor(const json& d) {
                 else if (!ids.insert(e["id"].get<std::string>()).second)
                     errs.push_back({path + "/id", "duplicate"});
                 if (!e.contains("title") || !e["title"].is_string()) errs.push_back({path + "/title", "required"});
+                if (e.contains("icon") && !e["icon"].is_null() && !e["icon"].is_string()) errs.push_back({path + "/icon", "must be a string"});
                 if (!e.contains("layerPrefixes") || !e["layerPrefixes"].is_array() || e["layerPrefixes"].empty())
                     errs.push_back({path + "/layerPrefixes", "must be a non-empty array"});
                 else for (const auto& p : e["layerPrefixes"])
@@ -148,7 +151,7 @@ json normalizeDescriptor(json d) {
     if (!d.contains("patch") || d["patch"].is_null()) d["patch"] = json::array();
     if (!d.contains("vehicle") || d["vehicle"].is_null()) d["vehicle"] = json::array({"car", "bicycle", "foot", "transit"});
     if (d["format"] == "raster" && (!d.contains("tile_size") || d["tile_size"].is_null())) d["tile_size"] = 256;
-    for (const char* k : {"style_url", "tile_url", "provider", "logo", "thumbnail"})
+    for (const char* k : {"style_url", "tile_url", "provider", "logo", "thumbnail", "label"})
         if (d.contains(k) && d[k].is_null()) d.erase(k);
     if (!d.contains("details") || d["details"].is_null()) d["details"] = json::array();
     for (auto& e : d["details"])

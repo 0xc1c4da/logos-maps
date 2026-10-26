@@ -16,12 +16,13 @@ const char* kOpenFreeMapAttribution = R"({
   "© OpenStreetMap contributors": "https://www.openstreetmap.org/copyright"
 })";
 
-json ofm(const char* id, const char* name, const char* style, const char* light, const char* type,
+json ofm(const char* id, const char* name, const char* label, const char* style, const char* light, const char* type,
          const char* labels, const char* routes) {
     return json{
         {"v", 1},
         {"id", id},
         {"name", name},
+        {"label", label},  // M9.1a: what the layers panel tile says
         {"format", "mapbox-gl"},
         {"style_url", style},
         {"provider", "OpenFreeMap"},
@@ -44,16 +45,17 @@ json ofm(const char* id, const char* name, const char* style, const char* light,
 
 json builtinBasemaps() {
     json out = json::array();
-    out.push_back(ofm("openfreemap/bright", "OpenFreeMap Bright", "https://tiles.openfreemap.org/styles/bright",
+    out.push_back(ofm("openfreemap/bright", "OpenFreeMap Bright", "Bright", "https://tiles.openfreemap.org/styles/bright",
                       "day", "default", "waterway_line_label", "tunnel-service-track-casing"));
-    out.push_back(ofm("openfreemap/liberty", "OpenFreeMap Liberty", "https://tiles.openfreemap.org/styles/liberty",
+    out.push_back(ofm("openfreemap/liberty", "OpenFreeMap Liberty", "Liberty", "https://tiles.openfreemap.org/styles/liberty",
                       "day", "default", "waterway_line_label", "tunnel_motorway_link_casing"));
-    out.push_back(ofm("openfreemap/positron", "OpenFreeMap Positron", "https://tiles.openfreemap.org/styles/positron",
+    out.push_back(ofm("openfreemap/positron", "OpenFreeMap Positron", "Positron", "https://tiles.openfreemap.org/styles/positron",
                       "day", "clean", "waterway_line_label", "tunnel_motorway_casing"));
     out.push_back(json{
         {"v", 1},
         {"id", "osm/standard"},
         {"name", "OpenStreetMap Standard"},
+        {"label", "OSM"},
         {"format", "raster"},
         {"tile_url", "https://tile.openstreetmap.org/{z}/{x}/{y}.png"},
         {"tile_size", 256},

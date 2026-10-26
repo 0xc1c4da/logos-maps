@@ -292,34 +292,40 @@ LOGOS_TEST(impl_reports_chrome_view_topics) {
 LOGOS_TEST(descriptor_thumbnail_and_details_validate_and_normalise) {
     json d = mt::readJsonFixture("basemaps/openfreemap-bright.json");
     d["thumbnail"] = "bright.png";
+    d["label"] = "Bright";
     d["details"] = json::array({
-        json{{"id", "buildings3d"}, {"title", "3D buildings"}, {"layerPrefixes", json::array({"building-3d"})}, {"defaultVisible", false}},
+        json{{"id", "buildings3d"}, {"title", "3D buildings"}, {"icon", "data:image/svg+xml;utf8,<svg/>"}, {"layerPrefixes", json::array({"building-3d"})}, {"defaultVisible", false}},
         json{{"id", "poi"}, {"title", "POI"}, {"layerPrefixes", json::array({"poi_", "poi-"})}},
     });
     LOGOS_ASSERT_TRUE(validateDescriptor(d).empty());
     const json n = normalizeDescriptor(d);
     LOGOS_ASSERT_EQ(n["thumbnail"], json("bright.png"));
+    LOGOS_ASSERT_EQ(n["label"], json("Bright"));
+    LOGOS_ASSERT_TRUE(n["details"][0]["icon"].is_string());
     LOGOS_ASSERT_EQ(n["details"][0]["defaultVisible"], json(false));
     LOGOS_ASSERT_EQ(n["details"][1]["defaultVisible"], json(true));
     // Absent -> empty array; null thumbnail dropped.
     json plain = mt::readJsonFixture("basemaps/openfreemap-bright.json");
     plain["thumbnail"] = nullptr;
+    plain["label"] = nullptr;
     const json np = normalizeDescriptor(plain);
     LOGOS_ASSERT_EQ(np["details"], json::array());
     LOGOS_ASSERT_FALSE(np.contains("thumbnail"));
+    LOGOS_ASSERT_FALSE(np.contains("label"));
 
     json bad = d;
     bad["thumbnail"] = 3;
+    bad["label"] = 7;
     bad["details"] = json::array({
         json{{"id", "a"}, {"title", "A"}, {"layerPrefixes", json::array()}},
-        json{{"id", "a"}, {"layerPrefixes", json::array({"x"})}, {"defaultVisible", "no"}},
+        json{{"id", "a"}, {"layerPrefixes", json::array({"x"})}, {"defaultVisible", "no"}, {"icon", 1}},
         "nope",
     });
     const auto errs = validateDescriptor(bad);
     std::vector<std::string> paths;
     for (const auto& e : errs) paths.push_back(e.path);
     const std::string joined = mt::join(paths);
-    for (const char* p : {"/thumbnail", "/details/0/layerPrefixes", "/details/1/id", "/details/1/title", "/details/1/defaultVisible", "/details/2"})
+    for (const char* p : {"/thumbnail", "/label", "/details/0/layerPrefixes", "/details/1/id", "/details/1/title", "/details/1/defaultVisible", "/details/1/icon", "/details/2"})
         LOGOS_ASSERT_TRUE(joined.find(p) != std::string::npos);
 
     // Round-trips through the catalogue and the impl.
