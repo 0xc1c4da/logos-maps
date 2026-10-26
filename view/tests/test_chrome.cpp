@@ -237,6 +237,10 @@ int main(int argc, char** argv)
         WAIT_FOR(followEvents() == beforePan + 1);
         CHECK(core.lastEvent(QStringLiteral("followChanged")).value(QStringLiteral("reason")).toString() == QStringLiteral("gesture"));
         gestures->settle();
+        // On a slow machine the three drag calls span a few ms, which reads
+        // as a fling; its kinetic freeze would make the intents below
+        // "rejected while a gesture is in progress". Let it run out.
+        WAIT_FOR_MS(!gestures->gestureInProgress(), 5000);
 
         // The follow option drives it (reason option); a fix lost keeps the mode.
         view.setOptions(QStringLiteral(R"({"v":1,"follow":"follow"})"));
