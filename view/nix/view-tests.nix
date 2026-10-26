@@ -52,8 +52,11 @@ let
   base = stdenv.mkDerivation {
     pname = "maps-view-tests";
     version = "0.1.0";
-    inherit src;
-    sourceRoot = "source/tests";
+    # The tree unpacks under its store name, which is "source" for a path:
+    # flake but "view" when fetched with ?dir=view (the workspace pin); fix
+    # the name so sourceRoot and MAPS_VIEW_QML_DIR hold either way.
+    src = builtins.path { path = src; name = "maps-view"; };
+    sourceRoot = "maps-view/tests";
 
     nativeBuildInputs = [ pkgs.cmake pkgs.ninja pkgs.pkg-config pkgs.xvfb-run ];
     buildInputs = [
@@ -80,7 +83,7 @@ let
     checkPhase = ''
       runHook preCheck
       ${glEnv}
-      export MAPS_VIEW_QML_DIR=$NIX_BUILD_TOP/source/src/qml
+      export MAPS_VIEW_QML_DIR=$NIX_BUILD_TOP/maps-view/src/qml
       xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" \
         ctest --output-on-failure --timeout 300
       runHook postCheck
