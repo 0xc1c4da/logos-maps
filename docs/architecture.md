@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft 0.3 — implemented in `logos-workspace` (maps modules, engine patch set, RFC-1..8 on local platform branches: Linux Wayland transport hardened, cross-platform `channel` transport, one client API); for review before the RFCs are offered upstream |
+| Status | Draft 0.4 — implemented in `logos-workspace` (maps modules, engine patch set, RFC-1..8 on local platform branches: Linux Wayland transport hardened, cross-platform `channel` transport, one client API; rev 0.4 adds map chrome in the view and the groups/callout API in core); for review before the RFCs are offered upstream |
 | Applies to | `maps_core` (headless scene owner, runs in `logos_host`), `maps_view` (out-of-process renderer, runs in `ui-host`), the generic surface-embedding contract they require of the view runtime, and the `maplibre-native-qt` patch set they depend on |
 | Normative language | RFC 2119 (MUST / SHOULD / MAY). Requirements in this document are numbered `M<section>.<n>`. Requirements that fall on the *platform* (view runtime, Basecamp) rather than on the maps modules are numbered `RFC-<n>` and are proposals to those repositories, not obligations this repository can discharge alone. |
 | Companions | `references/initial-discussion.md` (DISC) records the research that led here. The GIS module is specified separately; §13 fixes only the seam it consumes. The quests specification (`repos/logos-quests/docs/backend-architecture.md`) is the house style this document follows. |
@@ -299,11 +299,16 @@ The engine's style is destroyed and recreated on every style load; every binding
 | Object | Fields (JSON) | Engine mapping |
 |---|---|---|
 | **source** | `id, type ∈ {geojson, vector, raster, raster-dem, image}, def` (type-specific: `data` or `url`/`tiles`/`tilejson`, `tileSize`, `minzoom/maxzoom`, `cluster*`, `tolerance`, `buffer`, `lineMetrics`, `promoteId`, `coordinates`) | `addSource/updateSource` (MLNQT `map.cpp:1267–1334`); options per MLN `include/mln/style/sources/geojson_source.hpp:19–41` (`synchronousUpdate` is a view-side policy) |
-| **layer** | `id, type ∈ {fill, line, symbol, circle, fill-extrusion, raster, hillshade, heatmap, background}, source, sourceLayer, minzoom, maxzoom, filter, layout{}, paint{}, placement` | `addLayer(id, params, before)` (`map.cpp:1418–1433`); zoom range via MLN `include/mln/style/layer.hpp:126–149` once §14 P6 lands, else `setLayoutProperty("visibility")` |
+| **layer** | `id, type ∈ {fill, line, symbol, circle, fill-extrusion, raster, hillshade, heatmap, background}, source, sourceLayer, minzoom, maxzoom, filter, layout{}, paint{}, placement, group?, callout?, selectable?` | `addLayer(id, params, before)` (`map.cpp:1418–1433`); zoom range via MLN `include/mln/style/layer.hpp:126–149` once §14 P6 lands, else `setLayoutProperty("visibility")` |
 | **image** | `id, pixelRatio, sdf, stretchX/Y, content, bytes (PNG)` | `addImage` + §14 P4; metadata per MLN `include/mln/style/image.hpp:37–45` |
+| **group** (rev 0.4) | `id, title, icon?, description?, defaultVisible = true, toggleable = true, order = 0, legend?: [{label, color? | image?}]` | none — a group is scene metadata the view's layers panel shows and toggles (§8.4); hiding a group sets `layout.visibility: none` on its member layers in that view only |
 | **placement** | `{ anchor: <basemap anchor name> | before: <layer id> | top }` | resolved to a concrete `before` id at apply time (§6.6) |
 
 Source *definition* and feature *data* are distinct (DISC 655–664): changing `def.cluster` recreates the source; changing `data` updates it.
+
+**M6.3a Groups (rev 0.4).** A layer's optional `group` names a group **in the same session**; `maps_core` MUST reject a `putLayer` whose `group` does not exist there (`maps.unknownId`). Groups are the unit the user toggles: OsmAnd's "Configure map" lists one entry per plugin layer (favourites, tracks, POI…), Vela's layers panel lists "map details" (traffic, transit, terrain, 3D buildings; VELA `LayersPanel.kt:132–198`, FEAT 19–23); neither exposes individual style layers, and a session (one per module) is too coarse because a module commonly draws several independently toggleable things. Visibility is **per view** and stored in that view's options (`hiddenGroups: [<group id>]`, §12.1 `setGroupVisible`), so two views of the same scene may differ, as Vela and OsmAnd store these choices per device and not in the data. Layers without a `group` are always shown and never appear in the panel. `removeGroup` ungroups its layers (they stay, and become visible); `dropSession` removes the session's groups.
+
+**M6.3b Callouts (rev 0.4).** A layer's optional `callout` declares how the view presents a picked feature of that layer without any module QML in the view process: `{title, subtitle?, icon?, actions?: [{id, label}]}` where `title`, `subtitle` and `icon` are **property templates** — `"{name}"` is replaced by the feature's `properties.name`, `"{{"` escapes a brace, an unresolved template renders empty — and `actions` is at most 8 entries. The view opens the callout for the first hit whose layer declares one (§8.4 M8.19), marks the feature `selected` (M8.15a) and reports `calloutOpened`; a tapped action reports `calloutAction{id}`; the owning module may replace or extend the content asynchronously with `setCalloutContent` (e.g. after a reverse geocode). `selectable` (default `true` when `callout` is present, else `false`) says whether the view sets `hover`/`selected` state on the layer's features at all; a pure decoration layer sets it `false` so hover queries skip it (M8.16 budget). Comparables: gl-js `Popup` renders arbitrary HTML the application supplies (`popup.ts:43–87`) — not possible across our process boundary, so the declaration is data; Vela's place sheet and Pure Maps' `PoiBlock` are application UI fed by their own stores, which here is the domain module answering `calloutOpened`.
 
 ### 6.4 `SceneBatch`
 
@@ -315,6 +320,7 @@ Source *definition* and feature *data* are distinct (DISC 655–664): changing `
 | `replaceGeoJson` | `sourceId, data` | whole-collection replace (maps 1:1 to engine) |
 | `patchFeatures` | `sourceId, upsert[], remove[]` | per-feature; `maps_core` maintains the authoritative collection and emits one `replaceGeoJson` to views (DISC 665–700 "feature patches are a module convenience") |
 | `putImage` | image | |
+| `putGroup` / `removeGroup` (rev 0.4) | group / `id` | create or replace a group (M6.3a); removing ungroups its layers |
 | `putLayer` | layer | create or replace |
 | `setPaint` / `setLayout` | `layerId, props{}` | partial property update |
 | `setFilter` | `layerId, filter` | |
@@ -355,6 +361,10 @@ Source *definition* and feature *data* are distinct (DISC 655–664): changing `
 **M7.3 Padding.** Padding is first-class, not a client-side centre offset: bottom sheets, side panels and navigation chrome set `padding` and every fit/ease respects it (VELA `setPadding` at `VelaMapView.kt:5321, 5332, 5350, 3536`; MGQ fractional `margins` `qquickitemmapboxgl.h:208–215`, applied as pixels `927–930`; PM `qml/Map.qml:675–689`). The view MUST expose `metersPerPixel` at the padded centre (MGQ `qquickitemmapboxgl.cpp:1040–1061`).
 
 **M7.4 Camera intents** addressed to a `viewId`: `jumpTo(camera)`, `easeTo(camera, animation)`, `flyTo(camera, animation)`, `fitBounds(bounds, padding, maxZoom, animation)`, `fitCoordinates(coords[], ...)` (bounds from coordinates, MGQ `qquickitemmapboxgl.cpp:373–411, 938–944`; `coordinateZoomForBounds` MLNQT `map.cpp:1184–1212`), `cancelTransitions()`. Intents are requests; the view MUST reject an intent while a gesture is in progress unless `force: true` (Vela cancels owned flights when fingers arrive, `VelaMapView.kt:4351–4362`).
+
+**M7.4a Fit to content (rev 0.4).** `fitSession {session, sourceId?, padding?, maxZoom?, animation?}` frames everything a session (or one of its GeoJSON sources) has published. `maps_core` resolves it — it holds the authoritative collections (M6.4 `patchFeatures`), so the module need not compute bounds client-side — into a `fitBounds` for the view; a single point or an empty extent becomes `jumpTo`/`easeTo` at `maxZoom` (default 16); no geometry at all is `maps.unknownId`. Comparables: QField "zoom to layer" (`layerTree.nodeExtent`, `QfLegendItemProperties.qml:246–269`), Pure Maps `fitView` (`Map.qml:602–608`).
+
+**M7.4b Intents and follow (rev 0.4).** An intent from any module ends an active follow mode (§8.4 M8.17) unless it carries `keepFollow: true` — the same rule Vela applies to its own jumps (a programmatic move > 1 km drops `followMe`, `MapScreen.kt:562–565`). The view reports the change as `followChanged{mode: "off", reason: "intent"}`.
 
 **M7.5 Viewport events.** The view MUST emit `cameraChanged(viewId, camera, reason ∈ {gesture, intent, follow})` throttled to once per rendered frame, and `cameraIdle(viewId, camera, bounds)` when motion (including inertia) ends. `bounds` is the padded visible region. Follow/track behaviours (free-drive follow, heading-up navigation, overview, detach-on-pan) are *client* policies built from these events and intents (VELA `FollowEstimator.kt:37–63`, `NavFraming.kt:24–78`, SPEC 1780–1925, 1989–2004); the view supplies only the primitives, plus the `gestureState` needed by those policies (§8.2 M8.14).
 
@@ -414,7 +424,7 @@ The engine ships no input handling for Qt; the Android SDK ships ~1,500 lines of
 
 **M8.7 Gesture events for policies.** The view MUST emit `gestureBegan/gestureEnded(viewId, kind ∈ {pan, pinch, rotate, shove, fling})` and distinguish a *pan* from a pinch's incidental translation by deciding in the move handler after scale has begun, not at move-begin (VELA `onMove` not `onMoveBegin`, `VelaMapView.kt:4266–4295`, `4253–4258`). Follow-camera clients use these to detach on pan, keep following through pinch (adopting the zoom as an override, `4323–4341`) and pause their ticker during shove (`4351–4382`).
 
-**M8.8 Non-touch parity.** Keyboard (arrows pan 18 % of the view, ±/− zoom, Shift+arrows rotate/tilt) and D-pad (pan, OK = pick at centre crosshair, long OK = long-press at centre) MUST route to the same pick and camera paths as touch (VELA `MapDpadController.kt:9–67`, `VelaMapView.kt:4858–4874`; FEAT 346–352; Qt Location `Shortcut` idiom QTLOC `minimal_map/main.qml:60–69`). Optional zoom buttons are a host concern (FEAT 38 "Prefer buttons over swipes").
+**M8.8 Non-touch parity.** Keyboard (arrows pan 18 % of the view, ±/− zoom, Shift+arrows rotate/tilt) and D-pad (pan, OK = pick at centre crosshair, long OK = long-press at centre) MUST route to the same pick and camera paths as touch (VELA `MapDpadController.kt:9–67`, `VelaMapView.kt:4858–4874`; FEAT 346–352; Qt Location `Shortcut` idiom QTLOC `minimal_map/main.qml:60–69`). Optional zoom buttons are view chrome, off by default (FEAT 38 "Prefer buttons over swipes"; §8.4 M8.17 — rev 0.3 called them a host concern, which would have put map UI outside the module).
 
 **M8.9 Wheel device quirks.** `WheelHandler.acceptedDevices` MUST include `TouchPad` on `cocoa` and `wayland` because Qt cannot distinguish mice from trackpads there (QTBUG-87646 / QTBUG-112394 / QTBUG-112432; QTLOC `minimal_map/main.qml:44–54`; MLNQT `examples/quick-standalone/main.qml:79–83`).
 
@@ -438,7 +448,39 @@ The engine ships no input handling for Qt; the Android SDK ships ~1,500 lines of
 
 *Implementation note (rev 0.1, M5).* The fallback is a `SelectionOverlay` in the reserved session `maps/builtin` (`maps/builtin:selection` GeoJSON source; `selection-fill`, `selection-line`, `selection-circle` layers) that mirrors each stateful feature's geometry, looked up with the engine's source query, and keeps the merged state (`set` merges keys, `null` removes, as mbgl does). The picker drops hits from the mirror and reads the state from it, so `featurePicked` is identical on both paths (§16.5). The path is selectable at runtime on the applier for tests; in production it follows the `scene.featureState` capability.
 
-**M8.16 Building-density probes** and other time-bounded aggregate queries (VELA SPEC 4053–4080: one probe per frame, 3×4 grid, 8 dp rects, area fraction 0.18) are expressible as `queryRenderedFeatures` batches with a per-frame budget and are a client concern; the view MUST enforce a budget of one aggregate query per frame.
+**M8.15a Reserved state keys (rev 0.4).** The view itself sets two feature-state keys on layers marked `selectable` (M6.3b), through `maps_core` so every view and the module see the same state: `hover: true` while the pointer rests over a feature (pointer devices only; one source-features query per pointer move, coalesced per frame, M8.16) and `selected: true` on the feature whose callout is open. Both are cleared by the view when the condition ends; a module MAY read them in paint expressions (`["feature-state", "hover"]`, the gl-js convention — `feature_state.ts`, examples `hover-styles`) and MAY set `selected` itself to open the matching callout. Other keys are the module's.
+
+### 8.4 Map chrome (rev 0.4)
+
+Chrome is what a map user expects on every map regardless of the domain content drawn on it. It runs **in the view process** (QML items in `maps_view`'s own window, like the rev 0.1 scale bar, compass and attribution), is **generic** (no module data, no module QML; it only renders scene metadata from M6.3a/b) and is configured **per view** through view options so a host can hide any of it. Basecamp is not involved beyond compositing the surface.
+
+**M8.17 Inventory and defaults.** The view MUST provide the following, each individually controllable through the `chrome` view option (`{scaleBar, compass, attribution, zoomButtons, locateButton, layersButton, callouts, coordinateReadout, statusChip}` booleans; unknown keys ignored), with the defaults and placements below. Placements follow the comparables where they agree and gl-js where they do not.
+
+| Item | Default | Position | Behaviour | Comparables |
+|---|---|---|---|---|
+| Scale bar | on | bottom-left | width = round distance / `metersPerPixel`, metric | gl-js `ScaleControl` default `bottom-left`; PM `ScaleBar.qml`; Vela bottom-left |
+| Compass | on | top-right | visible while `bearing ≠ 0` (or pitch ≠ 0); tap resets north **and** pitch with a 300 ms ease; hidden under `northLock` | gl-js `NavigationControl` compass, `resetNorthPitch`; Vela `CompassButton`, QField `CompassButton` |
+| Attribution | on | bottom-right | collapsed ⓘ expanding to the descriptor's `attribution` links | §9.5; gl-js compact attribution |
+| Zoom buttons | **off** | bottom-right, above attribution | `+`/`−` zoom ±1 about the padded centre, 500 ms ease; disabled at the zoom limits | Vela `prefer_buttons` off by default (FEAT 38); gl-js `NavigationControl` `zoomIn/zoomOut` (`camera.ts:552–559`, 500 ms via `easeTo` default); PM shows them only when the setting is on |
+| Locate button | on when a location source is set, else hidden | right edge, above zoom buttons | cycles follow mode (M8.18); icon reflects the mode; disabled while no fix | gl-js `GeolocateControl`; Vela `LocateButton`; QField `LocationToolbar`; PM `CenterButton` |
+| Layers button | on when any session has published a group or the basemap declares `details` | right edge, below compass | opens the layers panel (M8.20) | Vela `LayersButton`/`LayersPanel.kt`; PM `BasemapButton.qml`; OsmAnd "Configure map" |
+| Callouts | on | anchored to the feature | M8.19 | gl-js `Popup`; MapKit `MKAnnotationView.canShowCallout` |
+| Coordinate readout | **off** | bottom-left, above the scale bar | centre coordinate (or pointer coordinate on pointer devices) to 5 decimals, copy on tap | QField `showPositionInformation` default false; PM `showNarrative`-style toggles; gl-js none |
+| Status chip | on | top-centre | non-modal pill for `basemapLoading` > 1 s, `basemapFailed`, provider offline (M10), `anchorMissing`; disappears on recovery | Vela offline chip `MapScreen.kt:1612–1631`; QField `Toast` |
+
+The *host* may additionally request `padding` (M7.3) so that chrome clears host UI; chrome items apply the same padding on their own edges.
+
+**M8.18 Follow mode** is a view state machine (the rev 0.3 spec left it to clients; every comparable implements it in the map control, so a view that lacks it makes each module reimplement it): `mode ∈ {off, follow, followHeading}`. `follow` eases the camera to each `location` update (M8.17 locate button, §12.1 `setLocation`) keeping the user's zoom; `followHeading` additionally sets bearing to the heading when a heading is known (`"heading-up"`, Vela `autoRotate` tied to `autoCenter`, PM `autoRotate`). Transitions: locate tap cycles `off → follow → followHeading → off` (gl-js `GeolocateControl` `_onClickGeolocate` states `ACTIVE_LOCK → BACKGROUND`, Vela `LocateButton`); a **pan or rotate gesture** ends follow (gl-js `geolocate_control.ts:648–657` listens to `dragstart`; Vela `VelaMapView.kt:1171–1190`; QField `3293–3328`), a **zoom-only** gesture (pinch without pan beyond the pan threshold, wheel, double-tap, zoom buttons) does not; an intent ends follow unless `keepFollow` (M7.4b); a lost fix keeps the mode but stops easing. The view reports every transition as `followChanged{mode, reason ∈ {user, gesture, intent, option}}` and accepts the mode as a view option (`follow: "off" | "follow" | "followHeading"`) so a navigation module can drive it. The view MUST NOT ease while a gesture is in progress.
+
+**M8.19 Callout.** Opened by a tap whose first hit (after M8.12 priority) belongs to a layer with `callout` (M6.3b), or by `setCalloutContent` from a module, at most one per view. Anchor: the hit's `lonLat`, tracked per frame (M7.6 `trackCoordinates` semantics internally); the card prefers to sit above the point and flips below/left/right when it would leave the padded viewport (gl-js `popup.ts:681–708` auto-anchor); max width 240 dp (gl-js `popup.ts:16–25` `maxWidth: '240px'`); content = title, subtitle, icon, up to 8 action buttons; closes on a tap elsewhere, on Escape, on the feature's removal, on `dropSession`, on `basemapLoading`, and via `closeCallout` (gl-js `closeOnClick: true` default, `popup.ts:30–41`). Events: `calloutOpened{viewId, session, layerId, sourceId, featureId, lonLat, properties}`, `calloutAction{…, actionId}`, `calloutClosed{viewId, reason ∈ {tap, escape, action, removed, api}}`. The card is a QML item in the view window; it never enters the scene or the pick results.
+
+**M8.20 Layers panel.** A sheet listing, in `order`, (a) the current basemap's `details` (§9.1, each a named set of style-layer prefixes, with thumbnail), (b) every toggleable group from every session with its `title`, `icon`, `description` and `legend`, and (c) the basemap catalogue as thumbnail tiles with a selection ring (Vela `LayersPanel.kt:115–128`, PM `BasemapButton.qml:130–157`). Toggling a group calls `setGroupVisible`; toggling a detail updates `hiddenDetails` in the view options the same way; picking a basemap calls `setBasemap`. The panel reflects `groupVisibilityChanged` from other views and a group's removal live. Non-toggleable groups (`toggleable: false`) are listed with their legend only, so a module can publish a legend without offering a switch.
+
+**M8.21 Dropped pin.** A long-press (or right-click, D-pad long OK) with no hit drops a pin: the view adds a feature `pin:<lat>,<lng>` (Vela `MapViewModel.kt:5383–5450` uses this id form; PM `onPressAndHoldGeo`) to the `maps/builtin:pin` source, opens a built-in callout showing the coordinate to 5 decimals with actions `copy` (coordinate to the clipboard) and `share` (`geo:lat,lng` URI, Vela FEAT 53), and reports `pinDropped{viewId, lonLat}`; a module (e.g. a geocoder) answers with `setCalloutContent` to name it. One pin at a time; a new long-press replaces it; the pin clears on Escape, on tapping its callout away, or via the `clearPin` option, reporting `pinCleared`. A long-press **with** a hit is still delivered as `featurePicked{kind: longPress}` and drops nothing.
+
+**M8.22 Keyboard additions.** Beyond M8.8: `Escape` closes the callout, then clears the pin, then ends follow (first that applies); `Shift` + `+`/`−` zoom by 2 (gl-js `keyboard.ts` `zoomDelta * 2` with Shift, 300 ms ease); `+`/`−` and the zoom buttons share one path.
+
+**M8.23 Theme.** The view's chrome MUST use the host's theme when one is supplied and a neutral light theme otherwise. The `theme` view option is `{dark: bool, accent, foreground, background, surface, border, radius, fontFamily, fontPixelSize}` — the subset of `Logos.Theme` that chrome needs; the host's `Main.qml` forwards it on `Component.onCompleted` and on every `Theme` change (RFC-5 row "theme"; nothing in rev 0.3 implemented it). Chrome items read a single QML `theme` object; no colour is hard-coded.
 
 ---
 
@@ -469,9 +511,16 @@ The engine ships no input handling for Qt; the Android SDK ships ~1,500 lines of
   "fingerprint": "…",                // style identity for cache invalidation
   "anchors": { "labels": "waterway_line_label", "routes": "waterway_line_label" },
   "zoom": [0, 20],
-  "patch": [ { "op": "glyphs", "value": "logos://maps/glyphs/{fontstack}/{range}.pbf" } ]
+  "patch": [ { "op": "glyphs", "value": "logos://maps/glyphs/{fontstack}/{range}.pbf" } ],
+  "thumbnail": "openfreemap-bright.png",   // rev 0.4: tile image for the layers panel (file in the catalogue dir, data: URI, or absent)
+  "details": [                             // rev 0.4: user-toggleable parts of the basemap itself
+    { "id": "buildings3d", "title": "3D buildings", "layerPrefixes": ["building-3d"], "defaultVisible": false },
+    { "id": "poi",         "title": "Points of interest", "layerPrefixes": ["poi_", "poi-"], "defaultVisible": true }
+  ]
 }
 ```
+
+**M9.1a Thumbnail and details (rev 0.4).** `thumbnail` is optional and is what the layers panel (§8.4 M8.20) shows as the basemap tile (Vela ships a drawable per look, `LayersPanel.kt:115–128`; Pure Maps renders the provider `logo`); when absent the panel shows the name on a neutral tile. `details[]` names sets of the basemap's *own* style layers, by id prefix, that a user may switch (Vela's "map details": traffic, transit, terrain, 3D buildings, `LayersPanel.kt:132–198`); the view applies the per-view `hiddenDetails` option by setting `visibility: none` on matching style layers after every style load (M6.8), before the scene replays. Detail ids and group ids live in different namespaces.
 
 Field semantics: `format`, `profiles`, `type`, `vehicle`, `light`, `lang`, `lang_key`, `logo`, `keys`, `style_url`, `fingerprint`, `first_label_layer`→`anchors.labels`, `first_route_layer`→`anchors.routes`, `tile_url`, `tile_size` exactly as PM (`maps/README.md:33–36, 41–44, 54–56, 74–82, 97–99`; examples `maps/digitransit.json:2–13`, `maps/mapbox_0_streets.json:7–17`, `maps/here_0_normal_day.json:8, 13–14`). `keys` are resolved from the platform secret store, never stored in the descriptor (PM `poor/keystore.py:32–57, 138–144`). A `style_gui` section (PM `maps/README.md:97–99`) is out of scope — host chrome colours are a host theme concern.
 
@@ -570,6 +619,8 @@ struct ResourceProvider {
 | `offline.regions` | engine offline DB | MLN `offline.hpp` |
 | `surface.transport` | `wayland | channel-d3d11 | channel-iosurface | channel-shm | inprocess | none` — what `LogosViewSurface::transport()` reports (RFC-8). Under `wayland` the buffer kind (`shm`/`dmabuf`) is the host's to observe and is reported on the host's `Logos.Surface.transport` as `wayland-shm`/`wayland-dmabuf` | §3, RFC-6 §3, RFC-8 §1 |
 | `limits.maxImageSize`, `limits.maxBatchBytes`, `limits.maxPickHits` | | §15 |
+| `scene.groups`, `scene.callouts` (rev 0.4) | `putGroup`/`callout` accepted by core and rendered by the view | §6.3 M6.3a/b |
+| `chrome.items[]`, `chrome.follow`, `chrome.pin` (rev 0.4) | which §8.4 items the view implements; follow state machine; dropped pin | §8.4 |
 
 **M11.2** Errors on the public API are `LogosResult{ok:false, error}` with a stable machine code prefix: `maps.badArgument`, `maps.unknownSession`, `maps.unknownId`, `maps.noSuchView`, `maps.styleNotLoaded`, `maps.unsupported(<capability key>)`, `maps.providerError(<scheme>)`, `maps.timeout`. Scene-level rejection of individual ops is reported inside the `applyBatch` result (`rejected[] = {index, code, message}`) and never fails the whole call unless the batch is malformed (M6.7).
 
@@ -592,6 +643,11 @@ module maps_core {
   setFeatureState(session: string, sourceId: string, featureId: string, state: string) -> bool
   clearFeatureState(session: string, sourceId: string, featureId: optional<string>) -> bool
 
+  // groups and callouts (rev 0.4, §6.3 M6.3a/b, §8.4)
+  listGroups(session: optional<string>) -> string          // [{session, id, title, icon, description, toggleable, order, legend, layers[], defaultVisible}]
+  setGroupVisible(viewId: string, session: string, groupId: string, visible: bool) -> bool // per view; "" viewId = every open view
+  setCalloutContent(viewId: string, content: string) -> bool // {title, subtitle?, icon?, actions?} replaces the open callout's content; "" viewId = every view showing it
+
   // basemaps
   listBasemaps(filter: string) -> string
   addBasemap(descriptor: string) -> bool
@@ -601,8 +657,8 @@ module maps_core {
   // views & camera intents
   listViews() -> string                                   // [{viewId, capabilities, state}]
   getViewState(viewId: string) -> string                  // camera, basemap, size, dpr, gestureState
-  camera(viewId: string, intent: string /*JSON*/) -> bool // jumpTo | easeTo | flyTo | fitBounds | fitCoordinates | cancel
-  setViewOptions(viewId: string, options: string) -> bool // padding, constraints, gesture settings (§8.2), layer priority for picking
+  camera(viewId: string, intent: string /*JSON*/) -> bool // jumpTo | easeTo | flyTo | fitBounds | fitCoordinates | fitSession (M7.4a) | cancel; keepFollow (M7.4b)
+  setViewOptions(viewId: string, options: string) -> bool // padding, constraints, gesture settings (§8.2), layer priority for picking, chrome/theme/follow (§8.4), hiddenGroups/hiddenDetails
   toScreen(viewId: string, lonLats: string) -> string
   toGeo(viewId: string, pixels: string) -> string
   trackCoordinates(viewId: string, session: string, tracked: string) -> bool
@@ -622,7 +678,13 @@ module maps_core {
 
 **M12.1** Every JSON payload carries `"v": 1` at the top level; `maps_core` MUST reject unknown major versions with `maps.badArgument` and MUST ignore unknown keys within a known version (DISC 1040–1091 command schema; versioned per LMB `docs/configuration.md:577–595` metadata conventions).
 
-**M12.2** `applyBatch` is the only scene mutator. Convenience wrappers (e.g. `setGeoJson(session, sourceId, data)`) MAY be generated client-side by the SDK generator (SDK `README.md:347–373`) but MUST NOT exist as separate IPC methods, keeping one validation path.
+**M12.2** `applyBatch` is the only scene mutator. Convenience wrappers (e.g. `setGeoJson(session, sourceId, data)`) MAY be generated client-side by the SDK generator (SDK `README.md:347–373`) but MUST NOT exist as separate IPC methods, keeping one validation path. `setGroupVisible` and `setCalloutContent` do not mutate the scene: the first edits a view's options (`hiddenGroups`) and the second a view's transient chrome, which is why they are not batch ops.
+
+**M12.3 Domain-module recipe (rev 0.4).** A module that wants to draw on the map needs exactly this, and no view code: one `applyBatch` on its own session with `putSource` + `putGroup` + `putLayer{group, callout, placement}`; `patchFeatures`/`replaceGeoJson` as its data changes; `camera{fitSession}` when the user asks to see it all; subscribe to `maps.calloutOpened`/`maps.calloutAction` (filtering on its session) to react, `maps.pinDropped` if it can name places, and `maps.groupVisibilityChanged` if it wants to pause work for hidden groups. The user gets the group in the layers panel, callouts on tap, hover/selected states, and fit-to-content from the view. The quests module (`references/quests-spec.md`) is the first intended consumer: its waypoint listing is this recipe with one group per quest.
+
+### 12.1b View-side protocol (implemented; not part of the public API)
+
+The calls between `maps_view` and `maps_core` that carry the above, listed so the two halves can be reviewed together. All are `maps_core` methods callable only with a `viewId` the core issued: `openView/closeView`, `ackRevision`, `getChanges(sinceRevision)`, `getLayerOrder(basemapId)`, `getBasemap`, `reportViewState`, `reportViewEvent(viewId, topic, payload)` — which re-broadcasts an allow-listed topic as the single `maps.viewEvent` (rev 0.4 adds `calloutOpened`, `calloutAction`, `calloutClosed`, `pinDropped`, `pinCleared`, `followChanged`, `groupVisibilityChanged` to the list). The view learns `hiddenGroups`/`hiddenDetails`/`chrome`/`theme`/`follow` through the options it already receives; group metadata arrives in the scene JSON (`groups[]` per session) so no extra round-trip is needed on replay. Hover and selection travel as `setFeatureState` from the view, so a module's paint expressions and every other view see the same state.
 
 ### 12.2 `maps_view` backend (`.rep`, host-side replica)
 
@@ -640,10 +702,11 @@ class MapsViewBackend {
   SIGNAL(featurePicked(QString json))
   SIGNAL(cameraIdle(QString json))
   SIGNAL(attributionChanged(QString html))
+  SIGNAL(shareRequested(QString json))   // rev 0.4: {kind: copy|share, text} from the chrome (M8.17 readout, M8.21 pin)
 };
 ```
 
-The host never drives scene content through this replica; it goes through `maps_core` so other modules see it.
+The host never drives scene content through this replica; it goes through `maps_core` so other modules see it. `shareRequested` exists because the view's window is render-controlled and unfocused under the `channel` transport, where `QClipboard` from the view process is unreliable: the view sets its own clipboard best-effort and also hands the text to the module's host-side `Main.qml`, which copies it inside the host (the `kind` is `copy` for a coordinate, `share` for a `geo:` URI).
 
 ### 12.3 `Logos.Surface` (RFC-3 contract, as consumed by maps)
 
@@ -677,6 +740,12 @@ The maps module requires of the platform only what RFC-1..6 define: a surface to
 | `maps.viewOpened` / `maps.viewClosed` | `{viewId, capabilities}` | core |
 | `maps.snapshotReady` | `{requestId, bytesRef}` | view |
 | `maps.providerRequest` | `{scheme, path, range}` (debug/metrics only) | view |
+| `maps.groupVisibilityChanged` (rev 0.4) | `{viewId, session, groupId, visible}` | core (on `setGroupVisible`, including from the panel) |
+| `maps.calloutOpened` / `maps.calloutAction` / `maps.calloutClosed` (rev 0.4) | §8.4 M8.19 | view |
+| `maps.pinDropped` / `maps.pinCleared` (rev 0.4) | `{viewId, lonLat}` / `{viewId}` | view |
+| `maps.followChanged` (rev 0.4) | `{viewId, mode, reason}` | view |
+
+*Implementation note (rev 0.2–0.4).* View-originated topics reach the bus through `reportViewEvent` and are re-broadcast as one `maps.viewEvent{topic, …payload}` (the module context exposes one event name per emitter); consumers filter on `topic`. The rows above name the `topic` values.
 
 ### 12.5 `tileProvider` contract (implemented by other modules)
 
@@ -824,6 +893,12 @@ A test compositor (`QtWaylandCompositor` minimal, from Qt's `examples/wayland/mi
 
 *Implementation note (rev 0.2, M2/M7).* Two scripts, both against the real `maps_core` API over `logosctl` with nothing mocked. The core half is `core/tests/logosctl/smoke.sh` (`applyBatch` from `@batch.json`, `getScene` round-trip after canonicalisation, anchors, `dropSession`). The full run is `view/tests/logosctl/e2e.sh`: isolated `logosctl` session (`LOGOSCTL_CONFIG_DIR` + per-session `HOME`), `maps_core` installed from its `.lgx`, `maps_view_dev_headless` (the dev launcher under Xvfb + llvmpipe, the §16.1 recipe, with `--view-session e2e` — `--session` is consumed by `QGuiApplication`) rendering 512×384, a raster checkerboard basemap served from `file://` fixture tiles (`addBasemap`), a scene of one fill, one line and one circle layer published with `applyBatch` (no symbol layers, so the golden does not depend on the host's text stack), `camera jumpTo` to zoom 1 over 0,0, then `snapshot` → `snapshotReady{bytesRef}` and ImageMagick `compare -metric AE -fuzz 6%` against `view/tests/fixtures/e2e/golden.png` with a 0.5 % pixel tolerance. `snapshot` is implemented as a read-back of the engine's texture from the texture node (not `startStaticRender`, which would need a second map), so it captures exactly what the host composites. Result at `rev 0.2`: 0 of 196 608 pixels differ between independent runs. Two defects were found and fixed by this test: the view keyed the resolved layer order by `layerId` where `getLayerOrder` emits `id` (scene layers silently never inserted — the first golden was recorded without them), and the engine rendered a correct first frame and then blank ones (P11/P12, §14.1). The `revisionApplied` wait is honest only because the applier acknowledges a revision after the layers are in the engine (`m_ackedRevision`), not when the ops arrive.
 
+### 16.8 Chrome and groups (rev 0.4)
+
+Core (`core/tests`): `putGroup`/`removeGroup` validation and coalescing; `putLayer` with an unknown group rejected; `removeGroup` ungroups; `dropSession` removes groups; `callout` templates validated (≤ 8 actions, string templates); `setGroupVisible` edits `hiddenGroups` in the view's options and emits `groupVisibilityChanged`; `listGroups` lists layers per group; `fitSession` resolves to `fitBounds` from the authoritative collection, a single point to `easeTo` at `maxZoom`, an empty session to `maps.unknownId`; descriptors with `thumbnail`/`details` validate, normalise (`defaultVisible`) and round-trip through `addBasemap`/`getBasemap`; capabilities report `scene.groups`, `scene.callouts` and the view's `chrome.*`.
+
+View (`view/tests/test_chrome.cpp`, offscreen recipe of §16.1 with the fake core client): follow — `follow` eases on `setLocation`, a pan gesture ends it with `followChanged{reason: gesture}`, a wheel zoom does not, an intent without `keepFollow` does, with `keepFollow` does not, option `follow:"followHeading"` sets bearing from heading; zoom buttons — `+` zooms by exactly 1 about the padded centre and is disabled at `maxZoom`; theme — a `theme` option is reflected on the chrome `theme` object; groups — a hidden group sets `visibility: none` on its layers only, survives a style reload, and the panel model lists groups in `order` and basemap `details`; callout — opens on a hit whose layer declares one, templates substitute properties, flips its anchor at the viewport edge, `setCalloutContent` replaces content, Escape closes it with `calloutClosed{reason: escape}`, selection state travels through `setFeatureState`; pin — long-press without a hit adds `pin:lat,lng` to `maps/builtin:pin` and reports `pinDropped`, a second replaces it, Escape clears it; keys — Shift+`+` zooms by 2; status chip — appears for `basemapFailed` and disappears on `basemapLoaded`.
+
 ---
 
 ## 17. Open issues
@@ -890,6 +965,26 @@ Classes: `[render]` engine/style, `[overlay]` session content, `[gesture]`, `[ca
 | V28 | Runtime images (POI icons, road shields) | overlay | `PoiIcons.kt:17–78`, `RoadShields.kt:27–68`, `5868–6161` | M6.3 image, P4 |
 | V29 | Region download/update | data | FEAT 214–228; SPEC 4086–4140 | out (§4.2), M10.5 |
 | V30 | Streamed remote PMTiles | data/render | `StreamedPmtiles.kt`; FEAT 230–234 | M10.4 |
+| V31 | Layers panel: looks as thumbnail tiles, map details toggles | chrome | `LayersPanel.kt:115–128, 132–198`; FEAT 19–23 | M8.20, M9.1a (rev 0.4) |
+| V32 | Locate button cycles centre → heading-up; pan breaks follow, zoom keeps it | chrome/camera | `LocateButton`; `VelaMapView.kt:1171–1190`; `MapScreen.kt:562–565` | M8.18 (rev 0.4) |
+| V33 | Long-press drops a pin `pin:lat,lng`, sheet names it, share as `geo:` | chrome | `MapViewModel.kt:5383–5450`; FEAT 14, 53 | M8.21 (rev 0.4) |
+| V34 | Zoom buttons behind `prefer_buttons`, off by default | chrome | FEAT 38 | M8.17 (rev 0.4) |
+| V35 | Offline / loading chip, non-modal | chrome | `MapScreen.kt:1612–1631` | M8.17 status chip (rev 0.4) |
+
+### 18.1b Other comparables → where honoured (rev 0.4)
+
+| Source | Convention | Here |
+|---|---|---|
+| gl-js `camera.ts:552–559, 864–868` | `zoomIn/zoomOut` = ±1 via `easeTo`, 500 ms default | M8.17 zoom buttons |
+| gl-js `geolocate_control.ts:648–657` | `dragstart` ends active lock; zoom does not | M8.18 |
+| gl-js `popup.ts:16–25, 30–41, 681–708` | `maxWidth 240px`, `closeOnClick`, auto-anchor preferring bottom | M8.19 |
+| gl-js `feature_state.ts`, `hover-styles` example | `hover` as the conventional feature-state key | M8.15a |
+| gl-js `keyboard.ts` | Shift doubles the zoom step; 300 ms ease | M8.22 |
+| gl-js `ScaleControl`/`NavigationControl` defaults | scale bottom-left, compass/zoom top-right | M8.17 |
+| Pure Maps `BasemapButton.qml:130–157`, `CenterButton`, `onPressAndHoldGeo` | basemap tiles with selection ring; two-tap centre; long-press pin | M8.20, M8.18, M8.21 |
+| QField `showPositionInformation` (default false), `CompassButton`, `LocationToolbar`, `QfLegendItemProperties.qml:246–269` | readout off by default; compass; follow states; zoom-to-layer | M8.17, M8.18, M7.4a |
+| OsmAnd "Configure map" | one toggle per plugin layer, not per style layer | M6.3a groups |
+| MapKit `canShowCallout`, `MKAnnotationView` | callout as a per-annotation declaration | M6.3b |
 
 ### 18.2 Discussion proposals → decisions
 
@@ -948,6 +1043,7 @@ Classes: `[render]` engine/style, `[overlay]` session content, `[gesture]`, `[ca
 | 0.1 | 2026-10-25 | Initial specification. Replaces the exploratory `core/` and `ui/` drafts (MAPS daa36ba) as the design of record. |
 | 0.2 | 2026-10-25 | Post-implementation revision (M0–M7). Corrects M14.2 (vendored core is 702ebc6) and M14.3 (engine is the `engine/` flake consumed through `externalLibInputs`; the view does take `maps_core` as a flake input, for the builder's typed client and dev launcher); adds P11/P12 to the mandatory set (M14.1); records RFC-1..5 as implemented on `rfc/view-surface` branches (§3.3), the observed transport (`wayland-shm`, O11), the §16.6/§16.7 realisations and results, Spike A/B outcomes, and O11–O13. Implementation notes throughout are marked by milestone. |
 | 0.3 | 2026-10-26 | Cross-platform SurfaceTransport revision. M3.1 (window from `LogosViewSurface::window()`, RFC-8), M3.6 (the `channel` transport replaces the "fallback transports" paragraph, RFC-7), §11 transport names, M15.5 per-OS selection (RFC-6 §3); RFC-4 rev 2 (hardening) and RFC-5 rev 2 (policy, capability gate, isolation record) referenced; O4/O5 rewritten, O14–O17 added. |
+| 0.4 | 2026-10-26 | Map chrome and domain-module API. Scene gains **groups** (M6.3a, `putGroup/removeGroup`), per-layer **callout** declarations and `selectable` (M6.3b), reserved `hover`/`selected` state keys (M8.15a); camera gains `fitSession` (M7.4a) and `keepFollow` (M7.4b); new §8.4 Chrome — inventory with defaults and placements (M8.17), follow state machine (M8.18), callout (M8.19), layers panel (M8.20), dropped pin (M8.21), keyboard additions (M8.22), theme propagation (M8.23); descriptors gain `thumbnail`/`details` (M9.1a); §11 `scene.groups/callouts`, `chrome.*`; §12.1 `listGroups/setGroupVisible/setCalloutContent`, M12.3 domain-module recipe, §12.1b view-side protocol; §12.4 seven new topics; §16.8 chrome suite; §18.1 V31–V35 and §18.1b. Every placement and default is settled against a comparable (§18.1b). M8.8 corrected: zoom buttons are view chrome, not a host concern. |
 
 ---
 
