@@ -272,6 +272,7 @@ void ViewController::attachInput(QMapLibre::Map* map)
         pickAt(longPress ? QStringLiteral("longPress") : QStringLiteral("tap"), QPointF(s.width() / 2.0, s.height() / 2.0));
     });
     connect(m_picker.get(), &Picker::picked, this, [this](const QJsonObject& payload) {
+        if (qEnvironmentVariableIsSet("MAPS_VIEW_TRACE")) qDebug("maps_view: picked %s", qPrintable(compact(payload).left(300)));
         emit featurePicked(compact(payload));
         reportEvent(QStringLiteral("featurePicked"), payload);
         m_chrome->onFeaturePicked(payload);  // callout / pin (M8.19, M8.21)
@@ -307,6 +308,8 @@ void ViewController::syncPickerLayers()
 
 void ViewController::pickAt(const QString& kind, const QPointF& px)
 {
+    static const bool trace = qEnvironmentVariableIsSet("MAPS_VIEW_TRACE");
+    if (trace) qDebug("maps_view: pick %s at %.0f,%.0f", qPrintable(kind), px.x(), px.y());
     if (!m_picker) {
         emit error(QStringLiteral("maps.styleNotLoaded"), QStringLiteral("pick before the view started"));
         return;

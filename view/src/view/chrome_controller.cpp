@@ -462,6 +462,8 @@ void ChromeController::onCatalogue(const QJsonArray& descriptors)
         const QJsonObject d = v.toObject();
         list.append(QVariantMap{{QStringLiteral("id"), d.value(QStringLiteral("id")).toString()},
                                 {QStringLiteral("name"), d.value(QStringLiteral("name")).toString(d.value(QStringLiteral("id")).toString())},
+                                // M9.1a: the tile says `label`, falling back to `name`.
+                                {QStringLiteral("label"), d.value(QStringLiteral("label")).toString(d.value(QStringLiteral("name")).toString(d.value(QStringLiteral("id")).toString()))},
                                 {QStringLiteral("thumbnail"), d.value(QStringLiteral("thumbnail")).toString()},
                                 {QStringLiteral("format"), d.value(QStringLiteral("format")).toString()}});
     }
@@ -612,8 +614,13 @@ void ChromeController::onFeaturePicked(const QJsonObject& payload)
     const QJsonArray hits = payload.value(QStringLiteral("hits")).toArray();
     const QJsonArray lonLat = payload.value(QStringLiteral("lonLat")).toArray();
     if (kind == QLatin1String("longPress") || kind == QLatin1String("context")) {
-        // M8.21: no hit -> drop a pin; with a hit the pick stands alone.
-        if (hits.isEmpty() && lonLat.size() == 2) dropPin(lonLat.at(0).toDouble(), lonLat.at(1).toDouble());
+        // M8.21: no scene hit -> drop a pin; with one the pick stands alone.
+        // Basemap features (session "") sit under almost every point and do
+        // not count, or the pin would only ever land on open water.
+        bool sceneHit = false;
+        for (const QJsonValue& h : hits)
+            if (!h.toObject().value(QStringLiteral("session")).toString().isEmpty()) { sceneHit = true; break; }
+        if (!sceneHit && lonLat.size() == 2) dropPin(lonLat.at(0).toDouble(), lonLat.at(1).toDouble());
         return;
     }
     if (kind != QLatin1String("tap")) return;

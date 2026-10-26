@@ -27,7 +27,7 @@ Item {
         font.family: readout.theme.fontFamily || ""
         color: readout.theme.foreground
     }
-    TapHandler { onTapped: chrome.copyCoordinate() }
+    TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: chrome.copyCoordinate() }
     Accessible.role: Accessible.Button
     Accessible.name: qsTr("Copy coordinate %1").arg(readout.coordinate.text || "")
 }

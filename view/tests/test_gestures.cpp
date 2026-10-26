@@ -776,6 +776,7 @@ int main(int argc, char** argv)
         vw.setGestureController(&gc);
         vw.resize(640, 480);
         vw.setContextObject(QStringLiteral("view"), nullptr);
+        vw.setContextObject(QStringLiteral("chrome"), nullptr);
         MapItem* item = vw.load(qEnvironmentVariable("MAPS_VIEW_QML_DIR"));
         REQUIRE(item != nullptr);
         CHECK(!vw.usedFallback());
@@ -831,6 +832,39 @@ int main(int argc, char** argv)
         cam.reset();
         QTest::keyClick(&window, Qt::Key_Plus);
         WAIT_FOR_MS(cam.eases >= 1, 2000);
+
+        // A held left press is a long press (M8.21 pin); a right click is a
+        // context request. Both travel through the TapHandlers next to the
+        // DragHandler, which must not swallow them.
+        int longPresses = 0, contexts = 0, taps = 0;
+        QObject::connect(&gc, &GestureController::longPressed, [&] { ++longPresses; });
+        QObject::connect(&gc, &GestureController::contextRequested, [&] { ++contexts; });
+        QObject::connect(&gc, &GestureController::tapped, [&] { ++taps; });
+        QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+        WAIT_FOR_MS(longPresses == 1, 3000);
+        QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+        pump(100);
+        CHECK(taps == 0);  // a long press is not also a tap
+        QTest::mouseClick(&window, Qt::RightButton, Qt::NoModifier, QPoint(300, 200));
+        WAIT_FOR_MS(contexts == 1, 2000);
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+        WAIT_FOR_MS(taps == 1, 2000);
+
+        // A tap on chrome is not a tap on the map: the chrome's TapHandlers
+        // grab exclusively, so the root handler is cancelled, not fired.
+        auto* toggle = root->findChild<QQuickItem*>(QStringLiteral("attributionToggle"));
+        REQUIRE(toggle != nullptr);
+        auto* attribution = root->findChild<QQuickItem*>(QStringLiteral("attribution"));
+        REQUIRE(attribution != nullptr);
+        const QPoint onToggle = toggle->mapToScene(QPointF(toggle->width() / 2, toggle->height() / 2)).toPoint();
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, onToggle);
+        WAIT_FOR_MS(attribution->property("open").toBool(), 2000);
+        pump(600);  // past the single/double-tap disambiguation window
+        CHECK(taps == 1);
+        // ...and a tap on the map folds it again.
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(300, 200));
+        WAIT_FOR_MS(taps == 2, 2000);
+        CHECK(!attribution->property("open").toBool());
     }
 
     return finish();

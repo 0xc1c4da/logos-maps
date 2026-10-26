@@ -551,6 +551,13 @@ int main(int argc, char** argv)
         WAIT_FOR(core.eventCount(QStringLiteral("featurePicked")) > 0);
         pump(200);
         CHECK(core.eventCount(QStringLiteral("pinDropped")) == dropped2);
+        // ...but a hit on the basemap only (no session) is not a hit for this
+        // purpose: land cover sits under nearly every point.
+        chrome->onFeaturePicked(QJsonObject{{QStringLiteral("kind"), QStringLiteral("longPress")},
+                                            {QStringLiteral("lonLat"), QJsonArray{at.second, at.first}},
+                                            {QStringLiteral("hits"), QJsonArray{QJsonObject{{QStringLiteral("layerId"), QStringLiteral("landcover-grass")},
+                                                                                            {QStringLiteral("session"), QString()}}}}});
+        WAIT_FOR(core.eventCount(QStringLiteral("pinDropped")) == dropped2 + 1);
 
         // A module names it through setCalloutContent.
         core.emitCoreEvent(QStringLiteral("calloutContentChanged"), QJsonObject{{QStringLiteral("viewId"), view.viewId()},

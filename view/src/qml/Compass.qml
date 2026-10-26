@@ -38,7 +38,8 @@ Item {
             }
         }
     }
-    TapHandler { onTapped: compass.clicked() }
+    // Exclusive grab: a tap on chrome must not also reach the map (MapWindow).
+    TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: compass.clicked() }
     Accessible.role: Accessible.Button
     Accessible.name: qsTr("Reset north")
 }

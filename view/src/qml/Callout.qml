@@ -91,7 +91,7 @@ Item {
         border.color: callout.theme.border
 
         // Taps on the card stay on the card.
-        TapHandler { gesturePolicy: TapHandler.WithinBounds }
+        TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds }
 
         Column {
             id: body
@@ -144,7 +144,7 @@ Item {
                     font.pixelSize: callout.theme.fontPixelSize || 13
                     color: callout.theme.foreground
                     opacity: 0.7
-                    TapHandler { onTapped: chrome.closeCallout("tap") }
+                    TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: chrome.closeCallout("tap") }
                     Accessible.role: Accessible.Button
                     Accessible.name: qsTr("Close")
                 }
