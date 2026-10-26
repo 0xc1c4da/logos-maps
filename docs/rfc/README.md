@@ -1,20 +1,22 @@
 # Platform RFCs: out-of-process view surfaces
 
-These six proposals are what `docs/architecture.md` §3 asks of the Logos platform so
+These eight proposals are what `docs/architecture.md` §3 asks of the Logos platform so
 that a `ui_qml` module can render GPU content in **its own process** and have the host
-composite it into a tab — without any module code being loaded into the host. They are
-written against the repositories and line numbers in the spec's alias table (§0.2) and
-are implemented and tested in this workspace first (branches `rfc/view-surface` in each
-repository), then offered upstream.
+composite it into a tab — without any module code being loaded into the host, on
+Linux, Windows, macOS, iOS and Android. They are written against the repositories and
+line numbers in the spec's alias table (§0.2) and are implemented and tested in this
+workspace first (branches `rfc/view-surface` in each repository), then offered upstream.
 
 | RFC | Repository | Summary | Status |
 |---|---|---|---|
 | [RFC-1](RFC-1-view-surface-ui-host.md) | `logos-view-module-runtime` | `ui-host --gui`: a `QGuiApplication` process for modules that declare `view_surface` | implemented at `ee5eefb` |
 | [RFC-2](RFC-2-surface-handshake.md) | `logos-view-module-runtime` | Surface handshake: `--surface-socket`, `app_id` token, `READY ... SURFACE <token>`, `ViewModuleHost::surfaceToken()` | implemented at `ee5eefb` |
 | [RFC-3](RFC-3-logos-surface-qml.md) | `logos-basecamp` | `Logos.Surface` host QML type available to sandboxed app QML | implemented at `37c9a57` |
-| [RFC-4](RFC-4-nested-compositor.md) | `logos-basecamp` | Nested Wayland compositor (`SurfaceCompositor`) on a private socket | implemented at `37c9a57` |
-| [RFC-5](RFC-5-lifecycle-and-metadata.md) | `logos-module-builder`, `logos-basecamp` | `view_surface` metadata key; surface lifecycle and visibility pacing | implemented at `6a3994f` (builder) + `37c9a57` (Basecamp) |
-| [RFC-6](RFC-6-other-transports.md) | platform | Other `SurfaceTransport`s: macOS, Windows, in-process `ViewContainer` (informative) | informative |
+| [RFC-4](RFC-4-nested-compositor.md) | `logos-basecamp` | Nested Wayland compositor (`SurfaceCompositor`); rev 2 hardens it: guarded `wl_shm` reads (Qt patch), global allowlist with GPU buffers as policy, bounds, focus hygiene | implemented at `37c9a57`; rev 2 on `rfc/view-surface` (see table below) |
+| [RFC-5](RFC-5-lifecycle-and-metadata.md) | `logos-module-builder`, `logos-basecamp` | `view_surface` metadata key; lifecycle; rev 2 adds `SurfacePolicy`, the capability gate (specified) and the isolation record | implemented at `6a3994f` (builder) + `37c9a57` (Basecamp); rev 2 on `rfc/view-surface` |
+| [RFC-6](RFC-6-other-transports.md) | platform | **The `SurfaceTransport` contract** (a–e), per-OS selection, the in-process `ViewContainer` for iOS/Android | normative (rev 2.1: `channel` is the default on every platform; `wayland` only with GPU buffers) |
+| [RFC-7](RFC-7-channel-transport.md) | `logos-view-module-runtime`, `logos-basecamp` | The `channel` transport: host-allocated slot ring (`shm` / `d3d11` / `iosurface`) over a bounded protocol on a local socket, credits, value-based input | implemented for `shm`; `d3d11`/`iosurface` written, not compiled here |
+| [RFC-8](RFC-8-client-api.md) | `logos-view-module-runtime`, `logos-module-builder` | `LogosViewSurface::window()`: the one window a module renders into on every transport | implemented |
 
 Design invariants every RFC preserves (spec M3.1–M3.3):
 
@@ -27,7 +29,13 @@ Design invariants every RFC preserves (spec M3.1–M3.3):
 
 Vocabulary: a **view module** is a `ui_qml` module; its **backend** runs in `ui-host`;
 a **surface** is the GPU buffer the backend renders and the host shows; the **transport**
-moves it (RFC-4: Wayland).
+moves it (RFC-7: channel, the default everywhere; RFC-4: Wayland, Linux with GPU buffers); a **slot** is one host-allocated frame buffer
+of the channel transport; a **generation** is one host-authoritative geometry
+(size, DPR) of a surface.
+
+Assurance claimed by the set: **fault isolation** — a crashing or misbehaving module
+cannot crash, block or exhaust the host (RFC-6 §1 e). Not claimed: safety against a
+hostile module; what that needs is recorded in RFC-5 rev 2 §Part D.
 
 ## Branches and the PRs to open
 
