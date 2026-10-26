@@ -15,7 +15,7 @@ workspace first (branches `rfc/view-surface` in each repository), then offered u
 | [RFC-4](RFC-4-nested-compositor.md) | `logos-basecamp` | Nested Wayland compositor (`SurfaceCompositor`); rev 2 hardens it: guarded `wl_shm` reads (Qt patch), global allowlist with GPU buffers as policy, bounds, focus hygiene | implemented at `37c9a57`; rev 2 at `62c430f` (see table below) |
 | [RFC-5](RFC-5-lifecycle-and-metadata.md) | `logos-module-builder`, `logos-basecamp` | `view_surface` metadata key; lifecycle; rev 2 adds `SurfacePolicy`, the capability gate (specified) and the isolation record | implemented at `6a3994f` (builder) + `37c9a57` (Basecamp); rev 2 at `f73b358` (Basecamp `SurfacePolicy`) |
 | [RFC-6](RFC-6-other-transports.md) | platform | **The `SurfaceTransport` contract** (a–e), per-OS selection, the in-process `ViewContainer` for iOS/Android | normative (rev 2.1: `channel` is the default on every platform; `wayland` only with GPU buffers) |
-| [RFC-7](RFC-7-channel-transport.md) | `logos-view-module-runtime`, `logos-basecamp` | The `channel` transport: host-allocated slot ring (`shm` / `d3d11` / `iosurface`) over a bounded protocol on a local socket, credits, value-based input | implemented for `shm` at `1232d57`..`01bf4ef` (runtime) and `f73b358` (Basecamp); `d3d11`/`iosurface` written, not compiled here |
+| [RFC-7](RFC-7-channel-transport.md) | `logos-view-module-runtime`, `logos-basecamp` | The `channel` transport: host-allocated slot ring (`shm` / `d3d11` / `iosurface`) over a bounded protocol on a local socket, standing credits (§5 rev 2), value-based input | implemented for `shm` at `1232d57`..`01bf4ef` (runtime) and `f73b358` (Basecamp); `d3d11`/`iosurface` written, not compiled here |
 | [RFC-8](RFC-8-client-api.md) | `logos-view-module-runtime`, `logos-module-builder` | `LogosViewSurface::window()`: the one window a module renders into on every transport | implemented at `1232d57` (runtime), `249eb33` (builder) |
 
 Design invariants every RFC preserves (spec M3.1–M3.3):
@@ -70,16 +70,16 @@ Wayland session, Radeon 8060S):
 - `maps_view` live on the desktop over both families with the same package: surface
   bound, frames visible, pan/zoom through the inspector, teardown clean. Measured under
   camera motion at 2400×1350: `channel-shm` 2.1 ms render + 2.1 ms readback per frame
-  (~31 fps delivered, paced by the host's paint); `wayland-shm` ~340 ms per frame on
-  `llvmpipe` — which is why RFC-6 rev 2.1 makes `channel` the default everywhere.
+  (~31 frames/s delivered under the rev 1 pacing, ~90/s with the standing credit of
+  RFC-7 §5 rev 2, every frame shown); `wayland-shm` ~340 ms per frame on `llvmpipe` —
+  which is why RFC-6 rev 2.1 makes `channel` the default everywhere.
 - Not verified: `channel-d3d11` / `channel-iosurface` (no Windows/macOS build host; the
   code compiles only there), `wayland-dmabuf` (this host's EGL exposes no
   `EGL_WL_bind_wayland_display`, so the compositor's client buffer integration never
   comes up and `gpuBuffersAvailable()` is false — RFC-4 H5 therefore also unexercised),
   the in-process `ViewContainer` (RFC-6 §4, specified only), the capability gate
   (RFC-5 rev 2 Part C, specified with hook points only), live DPR change (RFC-5 rule 3).
-- Known follow-ups, not regressions: the `channel` ring is paced to the host's paint
-  (a slot returns after its successor has been painted, RFC-7 §5), so delivered frame
-  rate tracks the host's compositing rather than the view's render rate;
-  `wp_fractional_scale_v1` on the compositor is specified (RFC-4 rev 2) and not
+- Known follow-ups, not regressions: `channel` releases a slot after the host has
+  painted its successor (RFC-7 §5), which is required for `shm` and leaves the native
+  kinds a fence-based release to add when they are verified; `wp_fractional_scale_v1` on the compositor is specified (RFC-4 rev 2) and not
   implemented.

@@ -145,21 +145,47 @@ exceeds any of them is disconnected, never accommodated.
 
 ### 5. Pacing
 
-The host grants a `FrameRequest` when **all** hold: the surface is visible (item visible,
-tab active, window exposed); no credit is outstanding; a `Free` slot exists; and either
-the view sent `FrameWanted`, or the generation changed, or no frame has been shown yet.
-When the view becomes visible again the pending `FrameWanted` is honoured at once.
-`deadlineUs` is advisory (the host's refresh interval). The view renders a granted frame
-on its next event-loop turn and never otherwise; `QQuickRenderControl` stays idle while
-hidden exactly as a Wayland client does without frame callbacks (RFC-5 rule 1).
+A credit (`FrameRequest`) is **permission** to render into one slot, not an order. The
+host grants one when **all** hold: the surface is visible (item visible, tab active,
+window exposed); no credit is outstanding; a `Free` slot exists; and no `Ready` slot is
+waiting to be painted. The grant is made as soon as those hold — right after a
+`FrameReady`, right after the host takes a frame for display, right after a slot is
+released — so a view with something to draw always already holds the slot for its next
+frame while the host paints the current one, and no round trip sits on the critical
+path. The view spends a credit only when its scene has changed since its last frame
+(`QQuickRenderControl::sceneChanged` / `renderRequested`), or when the generation
+changed, or when nothing of this generation has been shown yet; an idle view holds its
+credit and renders nothing. `FrameWanted` is informational: the view says so when it has
+demand and no credit, which can only mean the ring is full until the host paints.
+`deadlineUs` is advisory (the host's refresh interval). `QQuickRenderControl` stays idle
+while hidden exactly as a Wayland client does without frame callbacks (RFC-5 rule 1); a
+view that is hidden while holding a credit may complete at most that one frame.
 
-A consequence worth stating: slots go back to the view only after the host has painted
-their successor (`afterRendering`), so a view with continuous demand is paced to the
-host's paint rate, and a host that does not paint at all (an offscreen window nobody
-grabs) holds the ring at its first three frames until it does. That is the intended
-coupling — the view never renders frames the host cannot show — and it is why
-`surface_channel_test` asserts a steadily rising frame count with an animating view
-behind a painting host.
+Two rules keep the coupling the way the contract wants it — *the view never renders
+frames the host cannot show*:
+
+- **One frame per host paint.** While a `Ready` frame waits, no credit is granted. The
+  view therefore cannot run ahead of the host and have frames superseded; its rate is
+  the host's paint rate (or its own, if slower). Granting on every free slot instead
+  gives mailbox behaviour — newest frame wins, one frame less latency — at the cost of
+  the view rendering about twice what is shown (measured 180 rendered for 100 shown);
+  this RFC chooses the former.
+- **Slots return after the paint.** A retired slot goes back to the view only after the
+  host has painted its successor (`afterRendering`), because for `shm` the host's
+  texture reads the mapping during that paint. A host that does not paint at all (an
+  offscreen window nobody grabs) therefore holds the ring at its first frames until it
+  does, which is why `surface_channel_test` asserts a steadily rising frame count with
+  an animating view behind a painting host, and `test_surface_channel` asserts that an
+  idle view holds its credit without rendering.
+
+The ring needs exactly three slots for this: one `Displayed`, one `Granted` to the view,
+and one in transit (`Ready` → `Displayed`, or `Retiring` → `Free`).
+
+Revision note: rev 1 of this section required the view's `FrameWanted` before each
+grant and granted only after the previous frame had been painted. Measured live, that
+serialised host and view — each waited for the other's ~10 ms — and delivered ~30
+frames/s from a view that renders in 5. With the standing credit the same view delivers
+~90 frames/s, every one of them shown (RFC-7 §8).
 
 ### 6. Input
 
@@ -209,9 +235,14 @@ is negotiated in `Hello`/`Welcome`. `Logos.Surface.transport` is `channel-shm`,
 Measured cost of `channel-shm` on the view side (`logos.surface.producer.debug=true`
 prints one line per frame: scene-graph render, then `finishRender` = GPU→slot
 readback): `maps_view` at 2400×1350 on a Radeon 8060S, 2.1 ms + 2.1 ms per frame under
-continuous camera motion, 412 frames in 13 s against a host painting through a
-`QQuickWidget`. The remaining gap to the host's 60 Hz is pacing (§5: a slot returns only
-after the host has painted its successor), not rendering.
+continuous camera motion. Pacing is observable end to end with
+`QT_LOGGING_RULES="logos.surface.host.debug=true;logos.surface.client.debug=true;basecamp.surface.channel.item.debug=true"`:
+the host logs each grant (time since the last `FrameReady`) and each `FrameReady` (time
+since its grant), the view logs credit→render and render time, and the Basecamp item
+prints one line a second with frames arrived, frames shown, host swaps and the
+arrival→paint wait. With the §5 rules, a 3 s `easeTo` at 1499×836 gave 90 frames/s
+arrived, 90/s shown, 91/s host swaps, arrival→paint 5 ms — the view renders only what
+the host paints, and the host paints everything the view renders.
 
 ## Tests
 
@@ -253,3 +284,12 @@ README's PR table for commits. `shm` slots are tested on Linux as described abov
 `D3D11SlotStorage` and `IOSurfaceSlotStorage` follow §4 against the public APIs cited
 there but **have not been compiled or run** in this workspace (no Windows or macOS
 build host); each file says so at the top and the PR text repeats it.
+
+§5 is at rev 2 (standing credit, one frame per host paint) after live measurement of
+rev 1; the wire protocol is unchanged — `FrameRequest`, `FrameReady`, `Release` and
+`FrameWanted` keep their encoding — only when the host sends a credit and when the view
+spends one changed. Mixed revisions still talk: a rev 2 view against a rev 1 host paces
+as rev 1 did; a rev 1 view against a rev 2 host spends every credit it is handed, so it
+redraws at the host's paint rate while idle (as a Wayland client that redraws on every
+frame callback would) until its runtime is updated. Both ends normally come from the
+same `LogosViewSurface` library.
